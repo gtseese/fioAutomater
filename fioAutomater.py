@@ -156,19 +156,6 @@ class SystemCommands(object):
         for drive in self.drives_list:
             self.serial_number[drive] = self.serial_num(drive)
 
-        # TODO: complete Dual LUN detection here
-        self.drive_by_sernum = {}
-        # this will find cases where the serial numbers match, and pair them as 2 LUNs on one drive
-        for key, value in self.serial_number.iteritems():
-            if value not in self.drive_by_sernum.values():
-                self.drive_by_sernum[value] = [key]
-            else:
-                self.drive_by_sernum[value].append(key)
-        # takes the dictionary created and flatten it into a list for compat with old 1 LUN/drive assumption
-        # TODO: decide if this is really the best way; or if keeping it as a dict is worth the effort to fix compat
-        # TODO: rename this to drives_list, drives_list(above) to drive_lun_list
-        self.drive_final = [lun_pair for lun_pair in drive_by_sernum.values()]
-
         if verbose_mode is True:
             print "Detected %s drives" % len(self.drives_list)
             print "Detected %s drives that contain partitions" % len(self.partitioned_drives)
