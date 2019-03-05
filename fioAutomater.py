@@ -267,7 +267,7 @@ class SystemCommands(object):
         def change_state(parm_val, smartctl_val, drive, cache_status):
             if self.SysType == "nt":
                 # TODO: Search for SeaChest
-                pass
+                p1 = 1
             else:
                 try:
                     p1 = subprocess.call(['sdparm', '-s', 'WCE=%s' % parm_val, '%s' % drive])
@@ -279,7 +279,7 @@ class SystemCommands(object):
                             p1 = subprocess.call(['hdparm', '-W%s' % parm_val, '%s' % drive])
                         except OSError:
                             # TODO: put SeaChest here
-                            pass
+                            p1 = 1
             # subprocess.call should return p1=0 on success
             if p1 != 0:
                 print cache_status
