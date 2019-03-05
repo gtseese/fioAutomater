@@ -1,4 +1,4 @@
-__version__ = '0.1b1'  # PEP 440
+__version__ = '0.2b0'  # PEP 440
 
 # if fio is installed in a non-default location, change this to the fio path
 fio = 'fio'
@@ -149,34 +149,41 @@ class SystemCommands(object):
         print "Collecting drive and system info ..."
         self.SysType = sys_type
 
+        # wmic os get Caption,CSDVersion /value
+        # uname -a
+
         # TODO: test these changes
-        self.drives_list = self.list_drives()
-        self.partitioned_drives = self.partition_check()
+        self.luns_list = self.list_luns()
+        self.partitioned_luns = self.partition_check()
         self.serial_number = {}
-        for drive in self.drives_list:
-            self.serial_number[drive] = self.serial_num(drive)
+        for lun in self.luns_list:
+            self.serial_number[lun] = self.serial_num(lun)
 
         # TODO: complete Dual LUN detection here
-        self.drive_by_sernum = {}
-        # this will find cases where the serial numbers match, and pair them as 2 LUNs on one drive
-        for key, value in self.serial_number.iteritems():
-            if value not in self.drive_by_sernum.values():
-                self.drive_by_sernum[value] = [key]
+        self.drive_to_lun = {}
+        # this will find cases where the serial numbers match, and pair them as 2+ LUNs on one drive
+        # drive_to_lun has form {'SerialNumber': ['/dev/sdx', '/dev/sdy']}
+        for lun_k, ser_num_v in self.serial_number.iteritems():
+            if ser_num_v not in self.drive_to_lun.values():
+                self.drive_to_lun[ser_num_v] = [lun_k]
             else:
-                self.drive_by_sernum[value].append(key)
+                self.drive_to_lun[ser_num_v].append(lun_k)
         # takes the dictionary created and flatten it into a list for compat with old 1 LUN/drive assumption
         # TODO: decide if this is really the best way; or if keeping it as a dict is worth the effort to fix compat
-        # TODO: rename this to drives_list, drives_list(above) to drive_lun_list
-        self.drive_final = [lun_pair for lun_pair in drive_by_sernum.values()]
+        self.drive_list = [lun_pair for lun_pair in self.drive_to_lun.values()]
 
         if verbose_mode is True:
-            print "Detected %s drives" % len(self.drives_list)
-            print "Detected %s drives that contain partitions" % len(self.partitioned_drives)
+            # wmic os get Caption,CSDVersion /value
+            print "Detected %s logical units" % len(self.luns_list)
+            print "Detected %s logical units that contain partitions" % len(self.partitioned_luns)
+            if len(self.drive_list) != len(self.luns_list):
+                print "Detected logical unit/drive mismatch. Revising drives list..." \
+                      "\nDetected %s drives" % len(self.drive_list)
 
     def clearscreen(self):
         return os.system('cls' if self.SysType == 'nt' else 'clear')
 
-    def list_drives(self):
+    def list_luns(self):
 
         if self.SysType == 'nt':  # for Windows
             # device = subprocess.check_output('wmic diskdrive get deviceid', shell=True).split()
@@ -324,7 +331,7 @@ class SystemCommands(object):
             # TODO: changed this to use list comprehension. py 2to3 cannot do the lambda propery
 
             def digit_remove(in_string):
-                """py 2to3 doesn't read the lambda properly. Convert it to a proper function"""
+                """py 2to3 doesn't read the lambda properly. This is a conversion to a proper function"""
                 cleaned_string = ''.join(char for char in in_string if not char.isdigit())
                 return cleaned_string
 
@@ -332,12 +339,6 @@ class SystemCommands(object):
                               if device.startswith('sd') and device[-1].isdigit()]
 
             return set(parted_devices)
-
-
-# TODO: move this down to where we call main(); it'll get lost here
-# TODO: Include printout "Gathering drive data..." or similar so that the delay doesn't cause concern
-# TODO: Alternately, make it an importable library (long term)
-OS = SystemCommands(os.name)
 
 
 ### End Section: OS dependent fcts ##############################################################
@@ -425,7 +426,7 @@ class Workload(object):
         self.rwmixread = read_percent
         self.rwmixwrite = write_percent
         self.percentage_random = percent_random
-        # This is the write cache setting for the workload. (True/False or None) This one doesn't get passed to fip
+        # This is the write cache setting for the workload. (True/False or None) This one doesn't get passed to fio
         self.write_cache_setting = enable_write_cache
         self.runtime = run_time
         self.ramp_time = ramp_time
@@ -1323,39 +1324,46 @@ def display_workloads_list(workloads_to_display, time_to_wait):
     # TODO: return the total runtime, and use it for a recalc based on fan loops
 
 
-def drive_assigner(drives_list):
+def drive_assigner(targets_list):
     """This function automatically finds and targets the user selected number of drives
     Auto assign goes in alphabetical order, low to high"""
 
     # TODO: right now eg sg10/PD10 will come before sg2/PD2 because it sorts alphabetical not numerical, fix that
 
-    full_drive_list = OS.drives_list
-    partitioned_drives_list = OS.partitioned_drives
+    # full drive list has form [['drive1'], ['drive2'], ['drive3_lun1', 'drive3_lun2'], etc]
+    full_lun_list = OS.luns_list
+    partitioned_luns_list = OS.partitioned_luns
+    full_drive_list = OS.drive_list
 
-    valid_targets = [drive for drive in full_drive_list if drive not in partitioned_drives_list]
+    valid_targets = [lun for lun in full_lun_list if lun not in partitioned_luns_list]
 
-    if drives_list is None:
+    if targets_list is None:
         # will end up here if the user didn't use -d flag
+
+        # Notify the user of the number of non-partitioned targets
+        print "Using auto-assign routine...\n There are %d valid unpartitioned targets." % \
+              (len(full_lun_list) - len(partitioned_luns_list))
+
         while True:
             try:
-                num_drives_to_auto_assign = int(raw_input("\n\nEnter a number of drives to auto-assign: "))
+                num_drives_to_auto_assign = int(raw_input("\n\nEnter the number of logical units to auto-assign: "))
                 break
             except ValueError:
                 print "Must be an integer value..."
 
-        target_drives = []
+        target_luns = []
 
         for index, target in enumerate(valid_targets):
             if index < num_drives_to_auto_assign:
-                target_drives.append(target)
+                target_luns.append(target)
                 print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
             else:
                 break
 
-        print "Requested %s drives. Found %s valid target drives." % (num_drives_to_auto_assign, len(target_drives))
+        print "Requested %s targets. Found %s valid target logical units." % (num_drives_to_auto_assign, len(target_luns))
 
     else:
-        # end up here if the user did use the -d flag
+        # end up here if the user did used the -d flag
 
         # on Windows, if user provided PDx notation convert to \\.\PHYSICALDRIVEx method (req'd by fio)
         if os.name == 'nt':
@@ -1365,20 +1373,20 @@ def drive_assigner(drives_list):
                 number = int(''.join(char for char in in_string if char.isdigit()))
                 return number
 
-            drive_numbers = [number_find(single_drive) for single_drive in drives_list]
+            drive_numbers = [number_find(single_drive) for single_drive in targets_list]
 
-            target_drives = ['\\\\.\\PHYSICALDRIVE' + str(drive_number) for drive_number in drive_numbers]
+            target_luns = ['\\\\.\\PHYSICALDRIVE' + str(drive_number) for drive_number in drive_numbers]
 
         else:
 
-            target_drives = drives_list
+            target_luns = targets_list
 
         # this will find any partitioned drives the user selected
-        targeted_partitioned_drives = [drive for drive in target_drives if drive in partitioned_drives_list]
+        targeted_partitioned_luns = [lun for lun in target_luns if lun in partitioned_luns_list]
 
-        drives_to_remove = []
-        for p_target in targeted_partitioned_drives:
-            print "\n***WARNING***\nDrive contains partitions: %8s %12s" % (p_target, OS.serial_number[p_target])
+        targets_to_remove = []
+        for p_target in targeted_partitioned_luns:
+            print "\n***WARNING***\nDevice contains partitions: %8s %12s" % (p_target, OS.serial_number[p_target])
             while True:
                 # TODO: add an overwrite all option
                     drive_remove = raw_input("Do you want to continue? (Will DESTROY ALL DATA)\n"
@@ -1391,26 +1399,26 @@ def drive_assigner(drives_list):
                               % (p_target, OS.serial_number[p_target])
                         break
                     elif drive_remove == 'R':
-                        drives_to_remove.append(p_target)
+                        targets_to_remove.append(p_target)
                         break
                     else:
                         print "Invalid choice.."
 
-        target_drives = [final_drive for final_drive in target_drives if final_drive not in drives_to_remove]
+        target_luns = [final_drive for final_drive in target_luns if final_drive not in targets_to_remove]
 
-        for index, target in enumerate(target_drives):
+        for index, target in enumerate(target_luns):
             # TODO: Use .format style used in display_workloads_list to prevent it from staggering on large numbers
             # TODO: combine this and the nearly identical one above into a single statement
             print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
 
     # TODO: Test this here instead of in drives from jobs; should trigger on ISP mode as well
-    drive_verify = raw_input("\nVerify drive list. Press Enter to continue or [Q] to Quit: ")
+    target_verify = raw_input("\nVerify device list. Press Enter to continue or [Q] to Quit: ")
 
-    if 'Q' in drive_verify.upper():
+    if 'Q' in target_verify.upper():
         print "Quitting due to keystroke..."
         quit(0)
     else:
-        return target_drives
+        return target_luns
 
     # return target_drives
 
@@ -2195,6 +2203,9 @@ def main():
     # Save verbosity and quiet as globals to avoid pass-in, since they should never change
     global verbose_mode
     verbose_mode = args.verbose_mode
+
+    global OS
+    OS = SystemCommands(os.name)
 
     # Check for system compatibility
     compat_check(os.name)
