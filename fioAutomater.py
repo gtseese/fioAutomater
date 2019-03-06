@@ -174,6 +174,7 @@ class SystemCommands(object):
             devices = [device.strip() for device in devices_unfiltered if device and 'DeviceID' not in device]
 
         else:  # for Linux
+            # TODO: Consider whether lsblk is a better way to do this
             devices = []
             for device in os.listdir("/dev/"):
                 if device.startswith("sd") and not device[-1].isdigit():
@@ -1308,6 +1309,9 @@ def display_workloads_list(workloads_to_display, time_to_wait):
     print "\nApproximate time to complete is: %sd:%sh:%sm:%ss" % (days, hours, minutes, seconds)
 
     # TODO: return the total runtime, and use it for a recalc based on fan loops
+    # TODO: runtime estimate is way off when there's many fio jobs/high Qs (fio takes a while to start and quit)
+    # TODO: each job seems to add about .3s per loop (on one sample of RR Q8, 88 jobs). Factor in this adjustment
+    # TODO: easy calc idea is to use seconds_to_add = len(job_list)/3
 
 
 def drive_assigner(drives_list):
@@ -2288,7 +2292,7 @@ def main():
         # TODO: id, WLID reset every fan loop, fix it so that the correct isd, WID are passed in on each loop
 
         for fan_speed_index, fan_speed in enumerate(args.fan_speeds):
-            print "Running fan speed setting %s of %s" % (fan_speed_index, len(args.fan_speeds))
+            print "Running fan speed setting %s of %s" % (fan_speed_index+1, len(args.fan_speeds))
             fan_speed_int = None
             for fan_command in args.fan_command:
                 """this is currently written on the assumption that each command controls 1 fan"""
@@ -2345,7 +2349,7 @@ def main():
     elif args.fan_command is None and args.fan_speeds is not None:
         # TODO: put a condition where it waits for user to set fan speed manually here, then continue
         for fan_speed_index, fan_speed in enumerate(args.fan_speeds):
-            print "Running fan speed %s of %s" % (fan_speed_index, len(args.fan_speeds))
+            print "Running fan speed %s of %s" % (fan_speed_index+1, len(args.fan_speeds))
 
             if fan_speed.startswith('0x') or fan_speed.lower().endswith('h'):
                 fan_speed_int = int(fan_speed.strip('hH'), 16)
