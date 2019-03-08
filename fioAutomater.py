@@ -2168,12 +2168,12 @@ def main():
                         help="Set this flag to run SMR drives. Note this setting applies to ALL drives under test.")
     parser.add_argument("-I", "--ISPmode", dest="isp_test", action="store_true",
                         help="Put the script into ISP (In System Performance) test mode. This mode is used to test "
-                             "the throughput under various fan loads. If this option is used without defining -f,"
-                             " --fancommand and -s, --fanspeeds the script will halt after each loop and request that "
-                             "the user manually set the fans. Default runtime is changed to 30s.")
-    parser.add_argument("-V", "--Verbose", dest="verbose_mode", action="store_true",
+                             "the throughput under various fan loads. If this option is used without defining "
+                             "-s, --fanspeeds the script will halt after each loop and request that "
+                             "the user manually set the fans.")
+    parser.add_argument("-v", "--verbose", dest="verbose_mode", action="store_true",
                         help="Display detailed info while running.")
-    parser.add_argument("--version", action="version", version="%(prog)s {version}".format(version=__version__))
+    parser.add_argument("-V", "--version", action="version", version="%(prog)s {version}".format(version=__version__))
 
     # TODO: Implement the commented out options
     # TODO: Add -D, --ListDevices to list the drives auto select will choose, then quit.
@@ -2288,8 +2288,6 @@ def main():
         # TODO: maybe put the create_results_db here to avoid creating a pwm column when it isn't needed
 
         # TODO: recalc the total runtime, as it doesn't account for fan loops (see ~line 1277)
-
-        # TODO: id, WLID reset every fan loop, fix it so that the correct isd, WID are passed in on each loop
 
         for fan_speed_index, fan_speed in enumerate(args.fan_speeds):
             print "Running fan speed setting %s of %s" % (fan_speed_index+1, len(args.fan_speeds))
