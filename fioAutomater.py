@@ -321,13 +321,6 @@ class SystemCommands(object):
 
             return set(parted_devices)
 
-
-# TODO: move this down to where we call main(); it'll get lost here
-# TODO: Include printout "Gathering drive data..." or similar so that the delay doesn't cause concern
-# TODO: Alternately, make it an importable library (long term)
-OS = SystemCommands(os.name)
-
-
 ### End Section: OS dependent fcts ##############################################################
 
 
