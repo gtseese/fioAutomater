@@ -157,7 +157,7 @@ class SystemCommands(object):
         self.partitioned_luns = self.partition_check()
         self.serial_number = {}
         for lun in self.luns_list:
-            self.serial_number[lun] = self.serial_num(lun)
+            self.serial_number[lun] = self.get_serial_num(lun)
 
         # TODO: complete Dual LUN detection here
         self.drive_to_lun = {}
@@ -194,6 +194,7 @@ class SystemCommands(object):
             devices = [device.strip() for device in devices_unfiltered if device and 'DeviceID' not in device]
 
         else:  # for Linux
+            # TODO: Consider whether lsblk is a better way to do this
             devices = []
             for device in os.listdir("/dev/"):
                 if device.startswith("sd") and not device[-1].isdigit():
@@ -204,7 +205,7 @@ class SystemCommands(object):
 
         return devices
 
-    def serial_num(self, drive):
+    def get_serial_num(self, drive):
         # TODO: use these for Windows:  wmic diskdrive get index,deviceid,serialnumber,partitions
         # TODO: for single drive: wmic diskdrive 11 get serialnumber(but it returns the header)
         if self.SysType == 'nt':
@@ -339,6 +340,10 @@ class SystemCommands(object):
                               if device.startswith('sd') and device[-1].isdigit()]
 
             return set(parted_devices)
+
+    def get_temperature(self, drive):
+        """use this to get the temperature for a drive"""
+        pass
 
 
 ### End Section: OS dependent fcts ##############################################################
@@ -1322,6 +1327,9 @@ def display_workloads_list(workloads_to_display, time_to_wait):
     print "\nApproximate time to complete is: %sd:%sh:%sm:%ss" % (days, hours, minutes, seconds)
 
     # TODO: return the total runtime, and use it for a recalc based on fan loops
+    # TODO: runtime estimate is way off when there's many fio jobs/high Qs (fio takes a while to start and quit)
+    # TODO: each job seems to add about .3s per loop (on one sample of RR Q8, 88 jobs). Factor in this adjustment
+    # TODO: easy calc idea is to use seconds_to_add = len(job_list)/3
 
 
 def drive_assigner(targets_list):
@@ -1523,12 +1531,14 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
         all_target_devices = []
 
         # create the list of iog commands and their values for db builder
-        # TODO: find a more graceful way to intergrate fan_speeds (possibly similar to write_cache??)
+        # TODO: find a more graceful way to integrate fan_speeds (possibly similar to write_cache??)
         iog_commands = ['ID', 'WLID', 'fan_pwm']
         iog_values = [row_id, wl_id, fan_power]
 
         # set the write cache setting to None by default
         current_wl_wc = None
+
+        # TODO: Add logic to add a row when a Dual LUN drive is detected
 
         for job_to_run in workload_to_run:
             """cycle by job (workload_to_run has form (global, job1, ..., jobX)"""
@@ -1935,8 +1945,7 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
                 elif 'latency' in data_request:
                     # latency needs 2 values; both the r/w and the percentage;
                     # the class uses ints but numbers are read from the db table columns as strings;
-                    # if the conversion fails it pulls the mean
-                    # TODO: maybe make it report PctErr instead of mean...
+                    # if the conversion fails it displays 'PctErr'
                     try:
                         data_value = single_job_result.latency(data_request.split('_')[0],
                                                                float(data_request.split('_')[1]))
@@ -2006,8 +2015,7 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
 def workload_list_saver(workloads_as_objects, filename):
     """Use this to save the currently generated workload list as a python pickle object to disk
     Will prompt user for the name. Return True if it worked."""
-    # TODO: decide if it's better to import every time save is called, or always
-    # Since save likely only gets called once, and likely not on every run, it probably should stay here...
+
     try:
         import cPickle as pickle
     except ImportError:
@@ -2020,7 +2028,6 @@ def workload_list_saver(workloads_as_objects, filename):
 def workload_list_loader(filename):
     """Load a workload list that has been saved to disk. This must load the list then rebuild the object.
     If a fio attribute exists in the save file but not in the version of the script being loaded, it will be dropped"""
-    # TODO: decide if it's better to import every time save is called, or always
 
     try:
         import cPickle as pickle
@@ -2198,6 +2205,8 @@ def main():
     # TODO: Add -L, --LogSave to allow saving of bw, iops, and lat logs (maybe use 1 flag each?)(might have mem issues)
     # TODO: Add - , --temperaturecheck that takes an interval in sec to get drive temperature. Default to not check it
     # TODO: Add -I, --ISPtest to put it into ISP test mode. Use 'ISP_example.fio' for how to set that up.
+    # TODO: Allow system config on Linux:
+    # TODO: /sys/block/sdx/device/queue_depth, /sys/block/sdx/queue/iosched/quantum, /sys/block/sdx/queue/max_sectors_kb
     args = parser.parse_args()
 
     # Save verbosity and quiet as globals to avoid pass-in, since they should never change
@@ -2249,12 +2258,8 @@ def main():
         list_of_workloads, workloads_plus_devices = isp_mode(args.fan_command, args.fan_speeds,
                                                              args.run_time, args.ramp_time)
 
-        # TODO: pull the create db fct out of run_fio_and_save results. done! test w regular mode
-        # TODO: Loop run_and_save once per fan speed
-        # TODO: Figure out how to add the fan speeds to the table as a column
         # TODO: Figure out where the hell I put that reordering of columns (and kick myself for doing that)
         # TODO: Keep advanced user flexibility in mind when modifying all this
-        # TODO: see 2196; loop fan speeds and add fan speed column any time user gives them, not just in ISP mode
         # DEBUG:
         # quit(0)
 
@@ -2292,24 +2297,20 @@ def main():
     if not os.path.exists(results_db_path):
         os.makedirs(results_db_path)
 
-    # TODO: Make sure this works outside the run_and_save fct
     # call the db creator fct to set up results storage and get the values in the table if it already exists
     result_table, table_row_id, wl_id, read_data_to_pull, write_data_to_pull = \
         create_results_db(results_db_path, result_db, args.table_name)
 
     print "\nWill save all files to the location: \n%s" % os.path.abspath(results_db_path)
 
-    # TODO: loop through fan speeds in ALL modes if the user gives a fan_command and fan_speed list
     # actually runs it and saves it
     if args.fan_command is not None and args.fan_speeds is not None:
         # TODO: maybe put the create_results_db here to avoid creating a pwm column when it isn't needed
 
         # TODO: recalc the total runtime, as it doesn't account for fan loops (see ~line 1277)
 
-        # TODO: id, WLID reset every fan loop, fix it so that the correct isd, WID are passed in on each loop
-
         for fan_speed_index, fan_speed in enumerate(args.fan_speeds):
-            print "Running fan speed setting %s of %s" % (fan_speed_index, len(args.fan_speeds))
+            print "Running fan speed setting %s of %s" % (fan_speed_index+1, len(args.fan_speeds))
             fan_speed_int = None
             for fan_command in args.fan_command:
                 """this is currently written on the assumption that each command controls 1 fan"""
@@ -2364,9 +2365,9 @@ def main():
                                      table_row_id, wl_id, read_data_to_pull, write_data_to_pull, fan_speed_int)
 
     elif args.fan_command is None and args.fan_speeds is not None:
-        # TODO: put a condition where it waits for user to set fan speed manually here, then continue
+
         for fan_speed_index, fan_speed in enumerate(args.fan_speeds):
-            print "Running fan speed %s of %s" % (fan_speed_index, len(args.fan_speeds))
+            print "Running fan speed %s of %s" % (fan_speed_index+1, len(args.fan_speeds))
 
             if fan_speed.startswith('0x') or fan_speed.lower().endswith('h'):
                 fan_speed_int = int(fan_speed.strip('hH'), 16)
@@ -2389,8 +2390,9 @@ def main():
                                                            fan_speed_int)
 
     else:
-        table_row_id, wl_id = run_fio_and_save_results(workloads_plus_devices, db_location, result_table, float(args.time_to_sleep),
-                                 table_row_id, wl_id, read_data_to_pull, write_data_to_pull, args.fan_speeds)
+        table_row_id, wl_id = run_fio_and_save_results(workloads_plus_devices, db_location, result_table,
+                                                       float(args.time_to_sleep), table_row_id, wl_id,
+                                                       read_data_to_pull, write_data_to_pull, args.fan_speeds)
 
     print "\nFor plots, target the Graphing script to the database file:\n%s\n\n" % os.path.abspath(db_location)
 
