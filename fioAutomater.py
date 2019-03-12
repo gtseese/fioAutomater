@@ -1,4 +1,4 @@
-__version__ = '0.1b1'  # PEP 440
+__version__ = '0.2b0'  # PEP 440
 
 # if fio is installed in a non-default location, change this to the fio path
 fio = 'fio'
@@ -149,21 +149,41 @@ class SystemCommands(object):
         print "Collecting drive and system info ..."
         self.SysType = sys_type
 
+        # wmic os get Caption,CSDVersion /value
+        # uname -a
+
         # TODO: test these changes
-        self.drives_list = self.list_drives()
-        self.partitioned_drives = self.partition_check()
+        self.luns_list = self.list_luns()
+        self.partitioned_luns = self.partition_check()
         self.serial_number = {}
-        for drive in self.drives_list:
-            self.serial_number[drive] = self.serial_num(drive)
+        for lun in self.luns_list:
+            self.serial_number[lun] = self.get_serial_num(lun)
+
+        # TODO: complete Dual LUN detection here
+        self.drive_to_lun = {}
+        # this will find cases where the serial numbers match, and pair them as 2+ LUNs on one drive
+        # drive_to_lun has form {'SerialNumber': ['/dev/sdx', '/dev/sdy']}
+        for lun_k, ser_num_v in self.serial_number.iteritems():
+            if ser_num_v not in self.drive_to_lun.values():
+                self.drive_to_lun[ser_num_v] = [lun_k]
+            else:
+                self.drive_to_lun[ser_num_v].append(lun_k)
+        # takes the dictionary created and flatten it into a list for compat with old 1 LUN/drive assumption
+        # TODO: decide if this is really the best way; or if keeping it as a dict is worth the effort to fix compat
+        self.drive_list = [lun_pair for lun_pair in self.drive_to_lun.values()]
 
         if verbose_mode is True:
-            print "Detected %s drives" % len(self.drives_list)
-            print "Detected %s drives that contain partitions" % len(self.partitioned_drives)
+            # wmic os get Caption,CSDVersion /value
+            print "Detected %s logical units" % len(self.luns_list)
+            print "Detected %s logical units that contain partitions" % len(self.partitioned_luns)
+            if len(self.drive_list) != len(self.luns_list):
+                print "Detected logical unit/drive mismatch. Revising drives list..." \
+                      "\nDetected %s drives" % len(self.drive_list)
 
     def clearscreen(self):
         return os.system('cls' if self.SysType == 'nt' else 'clear')
 
-    def list_drives(self):
+    def list_luns(self):
 
         if self.SysType == 'nt':  # for Windows
             # device = subprocess.check_output('wmic diskdrive get deviceid', shell=True).split()
@@ -185,7 +205,7 @@ class SystemCommands(object):
 
         return devices
 
-    def serial_num(self, drive):
+    def get_serial_num(self, drive):
         # TODO: use these for Windows:  wmic diskdrive get index,deviceid,serialnumber,partitions
         # TODO: for single drive: wmic diskdrive 11 get serialnumber(but it returns the header)
         if self.SysType == 'nt':
@@ -312,7 +332,7 @@ class SystemCommands(object):
             # TODO: changed this to use list comprehension. py 2to3 cannot do the lambda propery
 
             def digit_remove(in_string):
-                """py 2to3 doesn't read the lambda properly. Convert it to a proper function"""
+                """py 2to3 doesn't read the lambda properly. This is a conversion to a proper function"""
                 cleaned_string = ''.join(char for char in in_string if not char.isdigit())
                 return cleaned_string
 
@@ -320,6 +340,11 @@ class SystemCommands(object):
                               if device.startswith('sd') and device[-1].isdigit()]
 
             return set(parted_devices)
+
+    def get_temperature(self, drive):
+        """use this to get the temperature for a drive"""
+        pass
+
 
 ### End Section: OS dependent fcts ##############################################################
 
@@ -406,7 +431,7 @@ class Workload(object):
         self.rwmixread = read_percent
         self.rwmixwrite = write_percent
         self.percentage_random = percent_random
-        # This is the write cache setting for the workload. (True/False or None) This one doesn't get passed to fip
+        # This is the write cache setting for the workload. (True/False or None) This one doesn't get passed to fio
         self.write_cache_setting = enable_write_cache
         self.runtime = run_time
         self.ramp_time = ramp_time
@@ -1307,39 +1332,46 @@ def display_workloads_list(workloads_to_display, time_to_wait):
     # TODO: easy calc idea is to use seconds_to_add = len(job_list)/3
 
 
-def drive_assigner(drives_list):
+def drive_assigner(targets_list):
     """This function automatically finds and targets the user selected number of drives
     Auto assign goes in alphabetical order, low to high"""
 
     # TODO: right now eg sg10/PD10 will come before sg2/PD2 because it sorts alphabetical not numerical, fix that
 
-    full_drive_list = OS.drives_list
-    partitioned_drives_list = OS.partitioned_drives
+    # full drive list has form [['drive1'], ['drive2'], ['drive3_lun1', 'drive3_lun2'], etc]
+    full_lun_list = OS.luns_list
+    partitioned_luns_list = OS.partitioned_luns
+    full_drive_list = OS.drive_list
 
-    valid_targets = [drive for drive in full_drive_list if drive not in partitioned_drives_list]
+    valid_targets = [lun for lun in full_lun_list if lun not in partitioned_luns_list]
 
-    if drives_list is None:
+    if targets_list is None:
         # will end up here if the user didn't use -d flag
+
+        # Notify the user of the number of non-partitioned targets
+        print "Using auto-assign routine...\n There are %d valid unpartitioned targets." % \
+              (len(full_lun_list) - len(partitioned_luns_list))
+
         while True:
             try:
-                num_drives_to_auto_assign = int(raw_input("\n\nEnter a number of drives to auto-assign: "))
+                num_drives_to_auto_assign = int(raw_input("\n\nEnter the number of logical units to auto-assign: "))
                 break
             except ValueError:
                 print "Must be an integer value..."
 
-        target_drives = []
+        target_luns = []
 
         for index, target in enumerate(valid_targets):
             if index < num_drives_to_auto_assign:
-                target_drives.append(target)
+                target_luns.append(target)
                 print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
             else:
                 break
 
-        print "Requested %s drives. Found %s valid target drives." % (num_drives_to_auto_assign, len(target_drives))
+        print "Requested %s targets. Found %s valid target logical units." % (num_drives_to_auto_assign, len(target_luns))
 
     else:
-        # end up here if the user did use the -d flag
+        # end up here if the user did used the -d flag
 
         # on Windows, if user provided PDx notation convert to \\.\PHYSICALDRIVEx method (req'd by fio)
         if os.name == 'nt':
@@ -1349,20 +1381,20 @@ def drive_assigner(drives_list):
                 number = int(''.join(char for char in in_string if char.isdigit()))
                 return number
 
-            drive_numbers = [number_find(single_drive) for single_drive in drives_list]
+            drive_numbers = [number_find(single_drive) for single_drive in targets_list]
 
-            target_drives = ['\\\\.\\PHYSICALDRIVE' + str(drive_number) for drive_number in drive_numbers]
+            target_luns = ['\\\\.\\PHYSICALDRIVE' + str(drive_number) for drive_number in drive_numbers]
 
         else:
 
-            target_drives = drives_list
+            target_luns = targets_list
 
         # this will find any partitioned drives the user selected
-        targeted_partitioned_drives = [drive for drive in target_drives if drive in partitioned_drives_list]
+        targeted_partitioned_luns = [lun for lun in target_luns if lun in partitioned_luns_list]
 
-        drives_to_remove = []
-        for p_target in targeted_partitioned_drives:
-            print "\n***WARNING***\nDrive contains partitions: %8s %12s" % (p_target, OS.serial_number[p_target])
+        targets_to_remove = []
+        for p_target in targeted_partitioned_luns:
+            print "\n***WARNING***\nDevice contains partitions: %8s %12s" % (p_target, OS.serial_number[p_target])
             while True:
                 # TODO: add an overwrite all option
                     drive_remove = raw_input("Do you want to continue? (Will DESTROY ALL DATA)\n"
@@ -1375,26 +1407,26 @@ def drive_assigner(drives_list):
                               % (p_target, OS.serial_number[p_target])
                         break
                     elif drive_remove == 'R':
-                        drives_to_remove.append(p_target)
+                        targets_to_remove.append(p_target)
                         break
                     else:
                         print "Invalid choice.."
 
-        target_drives = [final_drive for final_drive in target_drives if final_drive not in drives_to_remove]
+        target_luns = [final_drive for final_drive in target_luns if final_drive not in targets_to_remove]
 
-        for index, target in enumerate(target_drives):
+        for index, target in enumerate(target_luns):
             # TODO: Use .format style used in display_workloads_list to prevent it from staggering on large numbers
             # TODO: combine this and the nearly identical one above into a single statement
             print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
 
     # TODO: Test this here instead of in drives from jobs; should trigger on ISP mode as well
-    drive_verify = raw_input("\nVerify drive list. Press Enter to continue or [Q] to Quit: ")
+    target_verify = raw_input("\nVerify device list. Press Enter to continue or [Q] to Quit: ")
 
-    if 'Q' in drive_verify.upper():
+    if 'Q' in target_verify.upper():
         print "Quitting due to keystroke..."
         quit(0)
     else:
-        return target_drives
+        return target_luns
 
     # return target_drives
 
@@ -1499,12 +1531,14 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
         all_target_devices = []
 
         # create the list of iog commands and their values for db builder
-        # TODO: find a more graceful way to intergrate fan_speeds (possibly similar to write_cache??)
+        # TODO: find a more graceful way to integrate fan_speeds (possibly similar to write_cache??)
         iog_commands = ['ID', 'WLID', 'fan_pwm']
         iog_values = [row_id, wl_id, fan_power]
 
         # set the write cache setting to None by default
         current_wl_wc = None
+
+        # TODO: Add logic to add a row when a Dual LUN drive is detected
 
         for job_to_run in workload_to_run:
             """cycle by job (workload_to_run has form (global, job1, ..., jobX)"""
@@ -1911,8 +1945,7 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
                 elif 'latency' in data_request:
                     # latency needs 2 values; both the r/w and the percentage;
                     # the class uses ints but numbers are read from the db table columns as strings;
-                    # if the conversion fails it pulls the mean
-                    # TODO: maybe make it report PctErr instead of mean...
+                    # if the conversion fails it displays 'PctErr'
                     try:
                         data_value = single_job_result.latency(data_request.split('_')[0],
                                                                float(data_request.split('_')[1]))
@@ -1982,8 +2015,7 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
 def workload_list_saver(workloads_as_objects, filename):
     """Use this to save the currently generated workload list as a python pickle object to disk
     Will prompt user for the name. Return True if it worked."""
-    # TODO: decide if it's better to import every time save is called, or always
-    # Since save likely only gets called once, and likely not on every run, it probably should stay here...
+
     try:
         import cPickle as pickle
     except ImportError:
@@ -1996,7 +2028,6 @@ def workload_list_saver(workloads_as_objects, filename):
 def workload_list_loader(filename):
     """Load a workload list that has been saved to disk. This must load the list then rebuild the object.
     If a fio attribute exists in the save file but not in the version of the script being loaded, it will be dropped"""
-    # TODO: decide if it's better to import every time save is called, or always
 
     try:
         import cPickle as pickle
@@ -2161,12 +2192,12 @@ def main():
                         help="Set this flag to run SMR drives. Note this setting applies to ALL drives under test.")
     parser.add_argument("-I", "--ISPmode", dest="isp_test", action="store_true",
                         help="Put the script into ISP (In System Performance) test mode. This mode is used to test "
-                             "the throughput under various fan loads. If this option is used without defining "
-                             "-s, --fanspeeds the script will halt after each loop and request that "
-                             "the user manually set the fans.")
-    parser.add_argument("-v", "--verbose", dest="verbose_mode", action="store_true",
+                             "the throughput under various fan loads. If this option is used without defining -f,"
+                             " --fancommand and -s, --fanspeeds the script will halt after each loop and request that "
+                             "the user manually set the fans. Default runtime is changed to 30s.")
+    parser.add_argument("-V", "--Verbose", dest="verbose_mode", action="store_true",
                         help="Display detailed info while running.")
-    parser.add_argument("-V", "--version", action="version", version="%(prog)s {version}".format(version=__version__))
+    parser.add_argument("--version", action="version", version="%(prog)s {version}".format(version=__version__))
 
     # TODO: Implement the commented out options
     # TODO: Add -D, --ListDevices to list the drives auto select will choose, then quit.
@@ -2174,6 +2205,8 @@ def main():
     # TODO: Add -L, --LogSave to allow saving of bw, iops, and lat logs (maybe use 1 flag each?)(might have mem issues)
     # TODO: Add - , --temperaturecheck that takes an interval in sec to get drive temperature. Default to not check it
     # TODO: Add -I, --ISPtest to put it into ISP test mode. Use 'ISP_example.fio' for how to set that up.
+    # TODO: Allow system config on Linux:
+    # TODO: /sys/block/sdx/device/queue_depth, /sys/block/sdx/queue/iosched/quantum, /sys/block/sdx/queue/max_sectors_kb
     args = parser.parse_args()
 
     # Save verbosity and quiet as globals to avoid pass-in, since they should never change
@@ -2225,12 +2258,8 @@ def main():
         list_of_workloads, workloads_plus_devices = isp_mode(args.fan_command, args.fan_speeds,
                                                              args.run_time, args.ramp_time)
 
-        # TODO: pull the create db fct out of run_fio_and_save results. done! test w regular mode
-        # TODO: Loop run_and_save once per fan speed
-        # TODO: Figure out how to add the fan speeds to the table as a column
         # TODO: Figure out where the hell I put that reordering of columns (and kick myself for doing that)
         # TODO: Keep advanced user flexibility in mind when modifying all this
-        # TODO: see 2196; loop fan speeds and add fan speed column any time user gives them, not just in ISP mode
         # DEBUG:
         # quit(0)
 
@@ -2268,14 +2297,12 @@ def main():
     if not os.path.exists(results_db_path):
         os.makedirs(results_db_path)
 
-    # TODO: Make sure this works outside the run_and_save fct
     # call the db creator fct to set up results storage and get the values in the table if it already exists
     result_table, table_row_id, wl_id, read_data_to_pull, write_data_to_pull = \
         create_results_db(results_db_path, result_db, args.table_name)
 
     print "\nWill save all files to the location: \n%s" % os.path.abspath(results_db_path)
 
-    # TODO: loop through fan speeds in ALL modes if the user gives a fan_command and fan_speed list
     # actually runs it and saves it
     if args.fan_command is not None and args.fan_speeds is not None:
         # TODO: maybe put the create_results_db here to avoid creating a pwm column when it isn't needed
@@ -2338,7 +2365,7 @@ def main():
                                      table_row_id, wl_id, read_data_to_pull, write_data_to_pull, fan_speed_int)
 
     elif args.fan_command is None and args.fan_speeds is not None:
-        # TODO: put a condition where it waits for user to set fan speed manually here, then continue
+
         for fan_speed_index, fan_speed in enumerate(args.fan_speeds):
             print "Running fan speed %s of %s" % (fan_speed_index+1, len(args.fan_speeds))
 
@@ -2363,8 +2390,9 @@ def main():
                                                            fan_speed_int)
 
     else:
-        table_row_id, wl_id = run_fio_and_save_results(workloads_plus_devices, db_location, result_table, float(args.time_to_sleep),
-                                 table_row_id, wl_id, read_data_to_pull, write_data_to_pull, args.fan_speeds)
+        table_row_id, wl_id = run_fio_and_save_results(workloads_plus_devices, db_location, result_table,
+                                                       float(args.time_to_sleep), table_row_id, wl_id,
+                                                       read_data_to_pull, write_data_to_pull, args.fan_speeds)
 
     print "\nFor plots, target the Graphing script to the database file:\n%s\n\n" % os.path.abspath(db_location)
 
