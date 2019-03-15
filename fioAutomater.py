@@ -1006,7 +1006,7 @@ def custom_workload_prompts(advanced_prompts_enabled, zone_mode_enabled):
 
     # TODO: Put any SMR specific options here
         if zone_mode_enabled is True:
-            wl_matrix_builder['zonemode'] = True
+            wl_matrix_builder['zonemode'] = ['zbd']
 
     # TODO: Advanced options below
     if advanced_prompts_enabled is True:
@@ -1048,6 +1048,7 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
     for fio_param in fio_param_list:
         fio_values_set.append(wl_matrix[fio_param])
 
+    # TODO: This is why the order is different on display from generated vs imported
     # Insert the rw values at the head of the list, they should cycle first
     fio_param_list.insert(0, 'rw')
     fio_values_set.insert(0, fio_rw_vals)
@@ -1164,8 +1165,12 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
     # TODO: Add baseline case to run before fans start up. Should be one drive under write test
     # TODO: Figure out how to handle Dual LUN
 
+    # this is the list that will actually be executed on
     isp_workload_list = []
+    # track the list of globals and send it to the display fct (display can currently not display other jobs)
     isp_global_list = []
+    # isp_baseline is a job that should run once without any agitator drives running to baselin the performance
+    isp_baseline_list = []
 
     # The IO defines have extra properties in order to allow proper setting of things like WC
     # in order to use the same fcts throughout, ISP mode must alsouse the advanced defines
@@ -1208,10 +1213,10 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
 
             isp_workload = (isp_global, under_test_job,)
 
-            agitators = [agitator_builder(ag_drive) for ag_drive in isp_drives_list if ag_drive != isp_drive]
+            # this is a job that should be run once and only once at the beginning of the ISP at lowest fan setting
+            isp_baseline = (isp_global, under_test_job,)
 
-            # agitator_job = Workload(jobname='agitatorSerNum', queue_depth=1, readwrite='randread', io_target='devname')
-            # agitators[0].new_group(True)
+            agitators = [agitator_builder(ag_drive) for ag_drive in isp_drives_list if ag_drive != isp_drive]
 
             for index, ag_job in enumerate(agitators):
                 if index == 0:
@@ -1226,6 +1231,7 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
 
             isp_workload_list.append(isp_workload)
             isp_global_list.append(isp_global)
+            isp_baseline_list.append(isp_baseline)
 
     # DEBUG:
     # print len(isp_global_list)
@@ -1233,7 +1239,9 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
 
     display_workloads_list(isp_global_list, 3)
 
-    return isp_global_list, isp_workload_list
+    # TODO: add isp_baseline_list as a return and run it once with fan_pwm = 'baseline' on slowest fan speed from -s
+
+    return isp_baseline_list, isp_global_list, isp_workload_list
 
 
 def display_workloads_list(workloads_to_display, time_to_wait):
@@ -1443,7 +1451,8 @@ def jobs_from_drives(list_of_drives):
         list_of_jobs.append(new_job)
 
     # prompt user to press Enter before run starts to be sure it never wipes data
-    drive_verify = raw_input("\nVerify drive list. Press Enter to continue or [Q] to Quit: ")
+    # drive_verify = raw_input("\nVerify drive list. Press Enter to continue or [Q] to Quit: ")
+    # This check has been moved. Only keep until I've verified the new location works in all cases
 
     # if 'Q' in drive_verify.upper():
     #     print "Quitting due to keystroke..."
@@ -2195,7 +2204,7 @@ def main():
                              "the throughput under various fan loads. If this option is used without defining -f,"
                              " --fancommand and -s, --fanspeeds the script will halt after each loop and request that "
                              "the user manually set the fans. Default runtime is changed to 30s.")
-    parser.add_argument("-V", "--Verbose", dest="verbose_mode", action="store_true",
+    parser.add_argument("-v", "--verbose", dest="verbose_mode", action="store_true",
                         help="Display detailed info while running.")
     parser.add_argument("--version", action="version", version="%(prog)s {version}".format(version=__version__))
 
@@ -2255,8 +2264,8 @@ def main():
 
     elif args.isp_test is True:
         # TODO: pull fan_command and fan_speed out of this; see line 2196 for why
-        list_of_workloads, workloads_plus_devices = isp_mode(args.fan_command, args.fan_speeds,
-                                                             args.run_time, args.ramp_time)
+        baseline_workloads, list_of_workloads, workloads_plus_devices = isp_mode(args.fan_command, args.fan_speeds,
+                                                                                 args.run_time, args.ramp_time)
 
         # TODO: Figure out where the hell I put that reordering of columns (and kick myself for doing that)
         # TODO: Keep advanced user flexibility in mind when modifying all this
@@ -2361,8 +2370,17 @@ def main():
                 print "Waiting 5s to allow fans time to ramp..."
             time.sleep(5)
 
-            table_row_id, wl_id = run_fio_and_save_results(workloads_plus_devices, db_location, result_table, float(args.time_to_sleep),
-                                     table_row_id, wl_id, read_data_to_pull, write_data_to_pull, fan_speed_int)
+            if fan_speed_index == 0 and baseline_workloads:
+                """run a single baseline run at lowest fan speed if in isp mode"""
+                print "Starting baseline workload..."
+                table_row_id, wl_id = run_fio_and_save_results(baseline_workloads, db_location, result_table,
+                                                               float(args.time_to_sleep), table_row_id, wl_id,
+                                                               read_data_to_pull, write_data_to_pull, 'baseline')
+                print "Baseline workload complete. Starting fan sweeps..."
+
+            table_row_id, wl_id = run_fio_and_save_results(workloads_plus_devices, db_location, result_table,
+                                                           float(args.time_to_sleep), table_row_id, wl_id,
+                                                           read_data_to_pull, write_data_to_pull, fan_speed_int)
 
     elif args.fan_command is None and args.fan_speeds is not None:
 
