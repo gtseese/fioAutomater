@@ -60,7 +60,6 @@ class FioMinimalOut(object):
     """use this class to pull the key values out of the fio -minimal output
     without needing to remember indexes"""
 
-    # TODO: verify all these indexes on something other than fio 2.0.9
     def __init__(self, filename):
         # super(, self).__init__()
         self.filename = filename
@@ -142,7 +141,6 @@ class FioMinimalOut(object):
 class SystemCommands(object):
     """Use this to issue commands that differ by OS. Each variable set via var_name = SystemCommands(os.name)
     should contain system info for the system it was called on"""
-    # TODO: Restructure this so that list_drives, serial_num, and partition_check get called once
 
     def __init__(self, sys_type):
 
@@ -152,7 +150,6 @@ class SystemCommands(object):
         # wmic os get Caption,CSDVersion /value
         # uname -a
 
-        # TODO: test these changes
         self.luns_list = self.list_luns()
         self.partitioned_luns = self.partition_check()
         self.serial_number = {}
@@ -302,7 +299,6 @@ class SystemCommands(object):
     def partition_check(self):
         if self.SysType == "nt":
 
-            # TODO: Test it thoroughly
             devs_unfiltered = subprocess.check_output('wmic diskdrive get deviceid,partitions', shell=True).splitlines()
             filtered_devs = [dev.strip() for dev in devs_unfiltered if dev and 'DeviceID' not in dev]
 
@@ -329,7 +325,6 @@ class SystemCommands(object):
             #     if device.startswith("sd") and device[-1].isdigit():
             #         parted_device = filter(lambda x: x.isalpha(), device)
             #         parted_devices.append(str('/dev/' + parted_device))
-            # TODO: changed this to use list comprehension. py 2to3 cannot do the lambda propery
 
             def digit_remove(in_string):
                 """py 2to3 doesn't read the lambda properly. This is a conversion to a proper function"""
@@ -392,7 +387,7 @@ class Workload(object):
     non_wlg_commands = ["write_cache_setting"]
 
     # Define any items that shouldn't print to the display list
-    skip_display = ['startdelay', 'bwavgtime', 'ioengine']
+    skip_display = ['startdelay', 'bwavgtime', 'ioengine', 'group_reporting', 'new_group']
 
     # this will update with all params that have ever been modified (for all WLs ever(no idea how that works))
     all_io_gen_commands = []
@@ -424,7 +419,7 @@ class Workload(object):
         self.name = jobname
 
         # The order that these are in will be the order of the display fct columns
-        self.filename = io_target
+        # self.filename = io_target
         self.rw = readwrite
         self.bs = blocksize
         self.iodepth = queue_depth
@@ -437,6 +432,7 @@ class Workload(object):
         self.ramp_time = ramp_time
         self.ioengine = io_engine
         self.zonemode = zone_mode
+        self.filename = io_target
         self.startdelay = start_delay
         self.bwavgtime = bw_avg_time
         self.group_reporting = group_report
@@ -1004,10 +1000,11 @@ def custom_workload_prompts(advanced_prompts_enabled, zone_mode_enabled):
                         print "%s is invalid. Read percentages must be an integer value" % read_mix
                         rp_valid = False
 
-    # TODO: Put any SMR specific options here
+    # Put any SMR specific options here
         if zone_mode_enabled is True:
             wl_matrix_builder['zonemode'] = ['zbd']
 
+    # TODO: Create a function for the bs, qd, read p, p rand, etc; there's a lot that can be reused
     # TODO: Advanced options below
     if advanced_prompts_enabled is True:
         pass
@@ -1048,10 +1045,10 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
     for fio_param in fio_param_list:
         fio_values_set.append(wl_matrix[fio_param])
 
-    # TODO: This is why the order is different on display from generated vs imported
+    # TODO: Reordered in class, verify this is no longer needed
     # Insert the rw values at the head of the list, they should cycle first
-    fio_param_list.insert(0, 'rw')
-    fio_values_set.insert(0, fio_rw_vals)
+    # fio_param_list.insert(0, 'rw')
+    # fio_values_set.insert(0, fio_rw_vals)
 
     # this statement cartesian products everything in the lists; it is the engine that makes this fct work
     wl_list = list(product(*fio_values_set))
@@ -1107,10 +1104,9 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
                     else:
                         setattr(wl_object, 'write_cache_setting', None)
 
-                    # TODO: delete print
                     # print wl_object.write_cache_setting
 
-                # TODO: DEBUG: delete print
+                # DEBUG: delete print
                 # print getattr(wl_object, param).io_command(), getattr(wl_object, param).io_value().fio_rw_val(),
             else:
 
@@ -1120,16 +1116,14 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
 
                 # delete anything that should only apply to mixed workloads from non-mixed workloads
                 if mixed_check is False and param in wl_object.mixed_unique:
-                    # TODO: delete print
-                    # print "Removing",
                     # TODO: figure out why delattr won't work
                     # delattr(wl_object, param)
                     setattr(wl_object, param, None)
 
-                # TODO: DEBUG: delete print
+                # DEBUG: delete print
                 # print getattr(wl_object, param),
 
-        # TODO: DEBUG: delete print
+        # DEBUG: delete print
         # print id(wl_object)
 
         # this will only add the generated workload to the final_wl_list if an identical workload object
@@ -1152,7 +1146,7 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
             if new_wl_object not in final_wl_list:
                 final_wl_list.append(new_wl_object)
 
-    # TODO: delete print
+    # DEBUG: delete print
     # print "%s workloads created" % len(wl_list_of_objects)
     # print "%s workloads kept" % len(final_wl_list)
 
@@ -1162,7 +1156,6 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
 def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
     """if the user enters -I or --ISPtest then use this to set up the workloads to run list"""
 
-    # TODO: Add baseline case to run before fans start up. Should be one drive under write test
     # TODO: Figure out how to handle Dual LUN
 
     # this is the list that will actually be executed on
@@ -1238,8 +1231,6 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
     # print len(isp_workload_list)
 
     display_workloads_list(isp_global_list, 3)
-
-    # TODO: add isp_baseline_list as a return and run it once with fan_pwm = 'baseline' on slowest fan speed from -s
 
     return isp_baseline_list, isp_global_list, isp_workload_list
 
@@ -1427,7 +1418,6 @@ def drive_assigner(targets_list):
             # TODO: combine this and the nearly identical one above into a single statement
             print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
 
-    # TODO: Test this here instead of in drives from jobs; should trigger on ISP mode as well
     target_verify = raw_input("\nVerify device list. Press Enter to continue or [Q] to Quit: ")
 
     if 'Q' in target_verify.upper():
@@ -1439,14 +1429,25 @@ def drive_assigner(targets_list):
     # return target_drives
 
 
-def jobs_from_drives(list_of_drives):
+def jobs_from_drives(list_of_drives, custom_jobnames):
     """Create a list of jobs based on drives passed in. Useful if you want 1 job per drive"""
-    # TODO: Determine if this really belongs here; this is building jobs from assigned drives, not assigning drives
+
     # build a job for each drive
     list_of_jobs = []
     for target_drive in list_of_drives:
+
+        default_jobname = OS.serial_number[target_drive]
+        if custom_jobnames is True:
+            jobname_prompt = raw_input("Current jobname is %s. \n"
+                                       "Enter a new name, or leave blank to use current: " % default_jobname)
+            if jobname_prompt == '':
+                set_jobname = default_jobname
+            else:
+                set_jobname = jobname_prompt
+        else:
+            set_jobname = default_jobname
         # list_of_jobs.append(Workload(io_target='/dev/'+target_drive, jobname=target_drive))
-        new_job = Workload(jobname=OS.serial_number[target_drive])
+        new_job = Workload(jobname=set_jobname)
         new_job.filename = target_drive
         list_of_jobs.append(new_job)
 
@@ -1486,32 +1487,10 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
                              row_id, wl_id, read_data_to_pull, write_data_to_pull, fan_power):
     """Actually set up and run the desired workloads here"""
 
-    # DEBUG
-    # result_db = 'SummaryFile.db'
-    # result_table = 'ResultTable'
-
     # use this to track fio errors
     fio_errors_list = []
 
     results_db_location, result_db = os.path.split(result_location)
-    #
-    # # Create the results folder if it doesn't already exist
-    # if not os.path.exists(results_db_location):
-    #     os.makedirs(results_db_location)
-    #
-    # # TODO: Get this out of here, it makes no sense to put it here.
-    # # call the db creator fct to set up results storage and get the values in the table if it already exists
-    # result_table, table_id, wl_id, read_data_to_pull, write_data_to_pull = \
-    #     create_results_db(results_db_location, result_db, result_table)
-
-    # print wl_id
-    # raw_input()
-
-    # initialize the row counter to 0 (id saves to database to give each row a unique id)
-    # table_id = 0
-
-    # create a workload id. Will only count workloads, not jobs
-    # wl_id = 0
 
     # loop number is needed to track runs through each loop as wl_id will be too high if appending to old table
     loop_number = 0
@@ -1702,7 +1681,6 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
 
 def create_results_db(result_location, db_results_file, db_results_table):
     """create the database file and table for the workloads list"""
-    # TODO: determine if this would be better as a pandas table(probably not)
 
     def build_table(save_to_location, db_table_name, desired_data):
         """Use this to actually build the table"""
@@ -1725,10 +1703,6 @@ def create_results_db(result_location, db_results_file, db_results_table):
 
             if column_name is 'bs':
                 table_maker_string += 'bs_normalized,'
-
-            # TODO: Decide if this is useful, or if just using jobname=<serialnum> is better
-            # if column_name is 'filename':
-            #     table_maker_string += 'serial_number,'
 
         data_points_cols = ','.join(desired_data)
 
@@ -1788,7 +1762,7 @@ def create_results_db(result_location, db_results_file, db_results_table):
                 table_choice = raw_input("Select a letter then press Enter: ")
 
                 if table_choice.upper() == 'N':
-                    # TODO: This will break in saving results, fix the script by returning the new table location
+                    # TODO: Check if this still errors: Will break in saving results, fixby returning  new table name
                     table_name = raw_input("Enter a new table name: ")
                     max_result_id = 0
                     max_wl_id = 0
@@ -2204,6 +2178,9 @@ def main():
                              "the throughput under various fan loads. If this option is used without defining -f,"
                              " --fancommand and -s, --fanspeeds the script will halt after each loop and request that "
                              "the user manually set the fans. Default runtime is changed to 30s.")
+    parser.add_argument("-J", "--CustomJobNames", dest="rename_jobs", action="store_true",
+                        help="Default behavior is to set the fio jobname as the serial number under test. Adding this"
+                             " flag will allow custom names for each job.")
     parser.add_argument("-v", "--verbose", dest="verbose_mode", action="store_true",
                         help="Display detailed info while running.")
     parser.add_argument("--version", action="version", version="%(prog)s {version}".format(version=__version__))
@@ -2253,10 +2230,10 @@ def main():
         if args.target_devices:
             # print "Drives given: %s" % args.target_devices
             drive_list = drive_assigner(args.target_devices)
-            drives_as_jobs = jobs_from_drives(drive_list)
+            drives_as_jobs = jobs_from_drives(drive_list, args.rename_jobs)
         else:
             drive_list = drive_assigner(None)
-            drives_as_jobs = jobs_from_drives(drive_list)
+            drives_as_jobs = jobs_from_drives(drive_list, args.rename_jobs)
 
         # for now this builds a unique job for each device. Once we allow custom jobs this might change
         # TODO: sort this out for custom jobs and ISP mode
@@ -2267,7 +2244,7 @@ def main():
         baseline_workloads, list_of_workloads, workloads_plus_devices = isp_mode(args.fan_command, args.fan_speeds,
                                                                                  args.run_time, args.ramp_time)
 
-        # TODO: Figure out where the hell I put that reordering of columns (and kick myself for doing that)
+        # TODO: Changed, verify: Figure out where the hell I put that reordering of columns
         # TODO: Keep advanced user flexibility in mind when modifying all this
         # DEBUG:
         # quit(0)
@@ -2288,10 +2265,10 @@ def main():
         if args.target_devices:
             # print "Drives given: %s" % args.target_devices
             drive_list = drive_assigner(args.target_devices)
-            drives_as_jobs = jobs_from_drives(drive_list)
+            drives_as_jobs = jobs_from_drives(drive_list, args.rename_jobs)
         else:
             drive_list = drive_assigner(None)
-            drives_as_jobs = jobs_from_drives(drive_list)
+            drives_as_jobs = jobs_from_drives(drive_list, args.rename_jobs)
 
         # for now this builds a unique job for each device. Once we allow custom jobs this might change
         # TODO: sort this out for custom jobs and ISP mode
@@ -2438,7 +2415,7 @@ if __name__ == "__main__":
 # print "\n\nAll io_gen_commands:"
 # print Workload.all_io_gen_commands
 
-# TODO: the below looks to be a good way to turn it into a CSV
+# the below looks to be a good way to turn it into a CSV
 '''
 print "Databse test print:"
 conn = sqlite3.connect('Results/SummaryFile.db')
@@ -2447,7 +2424,7 @@ with conn:
     cur.execute("SELECT * from ResultTable")
     print cur.fetchall() 
 '''
-# TODO: this is how to find every callable attr in a class -- use it in the load fct
+# this is how to find every callable attr in a class -- use it in the load fct
 # example = Example()
 # members = [attr for attr in dir(example) if not callable(getattr(example, attr)) and not attr.startswith("__")]
 # print members
