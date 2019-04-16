@@ -3,13 +3,13 @@ __version__ = '0.2b0'  # PEP 440
 # if fio is installed in a non-default location, change this to the fio path
 fio = 'fio'
 
-'''
-Rewrite of the latency tester script from bash to Python with a lot of new features. (Thus the rename)
+"""
+Rewrite of the latency tester script from bash to Python with a lot of new features. 
 The test will run user defined scripts and report and parse the  results.
-End goal is to be OS independent way to build, run, parse, and save fio test lists and results
-and maybe long term to be able to measure power using a SeaJoule.
+End goal is to be OS independent way to build, run, parse, and save fio test lists and results.
+Long term to may be able to measure power using a SeaJoule.
 Created by George Seese
-'''
+"""
 
 # TODO: Add Dual LUN awareness
 
@@ -39,6 +39,7 @@ Created by George Seese
 ### Section: Library imports #################################################
 # Needed for test execution
 import os
+import sys
 import time
 import subprocess
 import argparse
@@ -138,6 +139,8 @@ class FioMinimalOut(object):
 ### End fio minimal reader ##############################################################
 
 ### Section:  OS dependent functions ##########################################
+
+# TODO: Switch to sys.platform to be able to tell FreeBSD apart from Linux
 class SystemCommands(object):
     """Use this to issue commands that differ by OS. Each variable set via var_name = SystemCommands(os.name)
     should contain system info for the system it was called on"""
@@ -221,7 +224,7 @@ class SystemCommands(object):
 
             serial_number = [sernum.strip() for sernum in unfiltered_sernum if sernum and 'SerialNumber' not in sernum]
 
-            return serial_number[0]
+            return serial_number[0][0:8]
 
         else:
             # TODO: Test: udevadm info --query=all --name=/dev/sdc | grep ID_SERIAL_SHORT for SATA
@@ -337,8 +340,25 @@ class SystemCommands(object):
             return set(parted_devices)
 
     def get_temperature(self, drive):
-        """use this to get the temperature for a drive"""
-        pass
+        """use this to get the temperature for a drive. Will try to use smartctl for Windows and Linux"""
+        try:
+            p1 = subprocess.Popen(["smartctl", "-A", "%s" % drive], stdout=subprocess.PIPE)
+            p2 = subprocess.Popen(["grep", "Serial"], stdin=p1.stdout, stdout=subprocess.PIPE)
+
+            p1.stdout.close()
+            temp_out, err = p2.communicate()
+
+            if "Temperature_Celsius" in temp_out:
+                temperature = temp_out.split()[3]
+            elif "Current Drive Temperature" in temp_out:
+                temperature = temp_out.split(':')[1].strip()
+            else:
+                temperature = 'TempErr'
+
+        except OSError:
+            temperature = 'TempErr'
+
+        return temperature
 
 
 ### End Section: OS dependent fcts ##############################################################
@@ -389,7 +409,7 @@ class Workload(object):
     # Define any items that shouldn't print to the display list
     skip_display = ['startdelay', 'bwavgtime', 'ioengine', 'group_reporting', 'new_group']
 
-    # this will update with all params that have ever been modified (for all WLs ever(no idea how that works))
+    # this will update with all params that have ever been modified (for all WLs ever)
     all_io_gen_commands = []
 
     # this will track every attribute that has ever been defined as an fio global
@@ -419,6 +439,7 @@ class Workload(object):
         self.name = jobname
 
         # The order that these are in will be the order of the display fct columns
+        # Any items in write_unique, mixed_unique, or random_unique MUST go after self.rw
         # self.filename = io_target
         self.rw = readwrite
         self.bs = blocksize
@@ -837,7 +858,7 @@ def compat_check(env):
 
     # Check all Serial number tools
     # TODO may add alternate methods later (sg_inq, hdparm -I)
-    if smartctlpath is None and udevadmpath is None:
+    if smartctlpath is None and udevadmpath is None and env == "posix":
         warnings_list.append(
             "No serial number tool. Serial numbers will not save properly.\n   Install smartctl or udevadm to fix.")
 
@@ -850,6 +871,11 @@ def compat_check(env):
         warnings_list.append(
             "No supported SATA write cache tool found. SATA cache state cannot be altered.\n"
             "   Install sdparm, smartctl, or hdparm to fix.")
+
+    # Check for temperature tools
+    if smartctlpath is None:
+        warnings_list.append("No supported tool found to check temperature. If -T option is used, temperature values"
+                             "won't save properly. \nInstall smartctl to fix.")
 
     # Summarize all the warnings and errors
     if len(warnings_list) > 0:
@@ -928,7 +954,8 @@ def custom_workload_prompts(advanced_prompts_enabled, zone_mode_enabled):
                        "\n[B]: Both. Will run once enabled, then once disabled"
                        "\n[N]: No change. The script will not issue any set write cache commands."
                        ) % workload_opts_dict[write_key_check].display_desc
-                wc_entry[workload_opts_dict[write_key_check].fio_rw_val()] = raw_input("Enter a selection. [Q] will quit: ").upper()
+                wc_entry[workload_opts_dict[write_key_check].fio_rw_val()] = raw_input(
+                    "Enter a selection. [Q] will quit: ").upper()
 
                 if wc_entry[workload_opts_dict[write_key_check].fio_rw_val()] not in valid_wc_keys:
                     print "Invalid choice, try again..."
@@ -1679,7 +1706,7 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
     return row_id, wl_id
 
 
-def create_results_db(result_location, db_results_file, db_results_table):
+def create_results_db(result_location, db_results_file, db_results_table, check_temperature=False):
     """create the database file and table for the workloads list"""
 
     def build_table(save_to_location, db_table_name, desired_data):
@@ -1707,6 +1734,9 @@ def create_results_db(result_location, db_results_file, db_results_table):
         data_points_cols = ','.join(desired_data)
 
         table_maker_string += data_points_cols
+
+        if check_temperature is True:
+            table_maker_string += 'device_temp,'
 
         if table_maker_string[-1] is ',':
             table_maker_string = table_maker_string[:-1]
@@ -1753,7 +1783,7 @@ def create_results_db(result_location, db_results_file, db_results_table):
                   "or write cache changes if the last run didn't alter cache, etc. This will be updated later." \
                   "\n\nAn invalid choice WILL CRASH the script when the violating workload is reached.\n\n" \
                   "You may choose to:" \
-                  "\n[N]: Create new table in same .db file. The .csv will also use this name." \
+                  "\n[N]: Create new table in same .db file. The .csv will also use this name ."\
                   "\n[A]: Append to the exisiting table. Please heed the warning above." \
                   "\n[D]: Delete and overwrite the existing table." \
                   "\n[Q]: Quit."
@@ -1995,6 +2025,11 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
     return fio_parse_errors  # should be list of empty lists if there are no parser errors
 
 
+def check_and_save_drive_temp(drive_list):
+    """check the temperature for each given drive and then save it to the db table"""
+    pass
+
+
 def workload_list_saver(workloads_as_objects, filename):
     """Use this to save the currently generated workload list as a python pickle object to disk
     Will prompt user for the name. Return True if it worked."""
@@ -2181,6 +2216,8 @@ def main():
     parser.add_argument("-J", "--CustomJobNames", dest="rename_jobs", action="store_true",
                         help="Default behavior is to set the fio jobname as the serial number under test. Adding this"
                              " flag will allow custom names for each job.")
+    parser.add_argument("-T", "--CheckDriveTemperature", dest="temp_check", action="store_true",
+                        help="Check the temperature of all drives under test after each workload completes.")
     parser.add_argument("-v", "--verbose", dest="verbose_mode", action="store_true",
                         help="Display detailed info while running.")
     parser.add_argument("--version", action="version", version="%(prog)s {version}".format(version=__version__))
@@ -2285,7 +2322,7 @@ def main():
 
     # call the db creator fct to set up results storage and get the values in the table if it already exists
     result_table, table_row_id, wl_id, read_data_to_pull, write_data_to_pull = \
-        create_results_db(results_db_path, result_db, args.table_name)
+        create_results_db(results_db_path, result_db, args.table_name, args.temp_check)
 
     print "\nWill save all files to the location: \n%s" % os.path.abspath(results_db_path)
 
