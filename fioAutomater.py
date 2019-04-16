@@ -49,8 +49,14 @@ from collections import OrderedDict
 from itertools import product
 
 from copy import copy
-# Needed for preparsing
-import sqlite3
+# sqlite3 is a standard library on Windows and Linux, but not FreeBSD. Run a check for it on import
+try:
+    import sqlite3
+except ImportError:
+    print "Failed to import critical library:\nsqlite3\n. Please install."
+    if sys.platform.startswith('freebsd'):
+        print "On FreeBSD, this must be done using the command line:\n pkg install databases/py-sqlite3"
+    quit(3)
 
 
 ### End Section: Library imports ###############################################################
@@ -145,10 +151,10 @@ class SystemCommands(object):
     """Use this to issue commands that differ by OS. Each variable set via var_name = SystemCommands(os.name)
     should contain system info for the system it was called on"""
 
-    def __init__(self, sys_type):
+    def __init__(self):
 
         print "Collecting drive and system info ..."
-        self.SysType = sys_type
+        self.os_type = sys.platform
 
         # wmic os get Caption,CSDVersion /value
         # uname -a
@@ -173,6 +179,7 @@ class SystemCommands(object):
         self.drive_list = [lun_pair for lun_pair in self.drive_to_lun.values()]
 
         if verbose_mode is True:
+            print "\nOS is: %s\n" % self.os_type
             # wmic os get Caption,CSDVersion /value
             print "Detected %s logical units" % len(self.luns_list)
             print "Detected %s logical units that contain partitions" % len(self.partitioned_luns)
@@ -181,11 +188,11 @@ class SystemCommands(object):
                       "\nDetected %s drives" % len(self.drive_list)
 
     def clearscreen(self):
-        return os.system('cls' if self.SysType == 'nt' else 'clear')
+        return os.system('cls' if self.os_type == 'nt' else 'clear')
 
     def list_luns(self):
 
-        if self.SysType == 'nt':  # for Windows
+        if self.os_type == 'win32':  # for Windows
             # device = subprocess.check_output('wmic diskdrive get deviceid', shell=True).split()
             # for i in range(len(device)):
             #     if i != 0:
@@ -193,12 +200,24 @@ class SystemCommands(object):
             devices_unfiltered = subprocess.check_output('wmic diskdrive get deviceid', shell=True).splitlines()
             devices = [device.strip() for device in devices_unfiltered if device and 'DeviceID' not in device]
 
-        else:  # for Linux
+        elif self.os_type.startswith('linux'):  # for Linux
             # TODO: Consider whether lsblk is a better way to do this
             devices = []
             for device in os.listdir("/dev/"):
                 if device.startswith("sd") and not device[-1].isdigit():
                     devices.append(str('/dev/' + device))
+
+        elif self.os_type.startswith('freebsd'):
+
+            devices = []
+            for device in os.listdir("/dev/"):
+                if device.startswith("da") and not re.search(r'p[\d]+$', device):
+                    devices.append(str('/dev/') + device)
+
+        else:
+            devices = []
+            print "Unrecognized OS type: %s" % self.os_type
+            quit(5)
 
         # sort works here, but not on the return
         devices.sort()
@@ -208,7 +227,7 @@ class SystemCommands(object):
     def get_serial_num(self, drive):
         # TODO: use these for Windows:  wmic diskdrive get index,deviceid,serialnumber,partitions
         # TODO: for single drive: wmic diskdrive 11 get serialnumber(but it returns the header)
-        if self.SysType == 'nt':
+        if self.os_type == 'win32':
             # device = subprocess.check_output('wmic diskdrive get deviceid', shell=True).split()
             # devices = []
             # for i in range(len(device)):
@@ -226,7 +245,7 @@ class SystemCommands(object):
 
             return serial_number[0][0:8]
 
-        else:
+        else:  # FreeBSD is similar enough it runs here rather than as its own elif
             # TODO: Test: udevadm info --query=all --name=/dev/sdc | grep ID_SERIAL_SHORT for SATA
             # TODO: Test: udevadm info --query=all --name=/dev/sdd | grep ID_SCSI_SERIAL for SAS
             try:
@@ -247,8 +266,6 @@ class SystemCommands(object):
                     p1.stdout.close()
                     out, err = p2.communicate()
                     serial = out.split("=")[1].strip()[0:8]
-                except OSError:
-                    serial = "SerNumErr"
 
                 except IndexError:
                     #  this might be able to catch drives hooked up via SATA port
@@ -262,11 +279,26 @@ class SystemCommands(object):
                     except IndexError:
                         serial = 'SerNumErr'
 
+                except OSError:  # Try the FreeBSD method here
+                    try:
+                        drive_short = drive.split('/')[2]
+                        p1 = subprocess.Popen(['geom', 'disk', 'list', drive_short], stdout=subprocess.PIPE)
+                        p2 = subprocess.Popen(['grep', 'ident'], stdin=p1.stdout,stdout=subprocess.PIPE)
+                        p1.stdout.close()
+                        out, err = p2.communicate()
+                        try:
+                            serial = out.split(":")[1].strip()[0:8]
+                        except IndexError:
+                            serial = 'SerNumErr'
+
+                    except OSError:
+                        serial = 'SerNumErr'
+
             return serial
 
     def write_cache(self, drive, cache_state):
         def change_state(parm_val, smartctl_val, drive, cache_status):
-            if self.SysType == "nt":
+            if self.os_type == "win32":
                 # TODO: Search for SeaChest
                 p1 = 1
             else:
@@ -300,7 +332,7 @@ class SystemCommands(object):
             pass
 
     def partition_check(self):
-        if self.SysType == "nt":
+        if self.os_type == "win32":
 
             devs_unfiltered = subprocess.check_output('wmic diskdrive get deviceid,partitions', shell=True).splitlines()
             filtered_devs = [dev.strip() for dev in devs_unfiltered if dev and 'DeviceID' not in dev]
@@ -322,7 +354,7 @@ class SystemCommands(object):
 
             return set(parted_devices)
 
-        else:
+        elif self.os_type.startswith('linux'):
             # parted_devices = []
             # for device in os.listdir("/dev/"):
             #     if device.startswith("sd") and device[-1].isdigit():
@@ -336,6 +368,15 @@ class SystemCommands(object):
 
             parted_devices = [str('/dev/' + digit_remove(device)) for device in os.listdir('/dev/')
                               if device.startswith('sd') and device[-1].isdigit()]
+
+            return set(parted_devices)
+
+        elif self.os_type.startswith('freebsd'):
+
+            parted_devices = []
+            for p_device in os.listdir("/dev/"):
+                if re.search(r'p[\d]+$', p_device):
+                    parted_devices.append(str('/dev/') + p_device)
 
             return set(parted_devices)
 
@@ -1073,9 +1114,10 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
         fio_values_set.append(wl_matrix[fio_param])
 
     # TODO: Reordered in class, verify this is no longer needed
+    # TODO: It is still needed; need to figure out why
     # Insert the rw values at the head of the list, they should cycle first
-    # fio_param_list.insert(0, 'rw')
-    # fio_values_set.insert(0, fio_rw_vals)
+    fio_param_list.insert(0, 'rw')
+    fio_values_set.insert(0, fio_rw_vals)
 
     # this statement cartesian products everything in the lists; it is the engine that makes this fct work
     wl_list = list(product(*fio_values_set))
@@ -1535,12 +1577,16 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
 
         # insert the OS specific fio commands
         # TODO: switch this to use the Workloads objects rather than a command line append
-        if os.name == 'nt':
+        if sys.platform == 'win32':
             command_line_string.insert(1, '--ioengine=windowsaio')
             # TODO: verify that thread=1 is still true and needed
             command_line_string.insert(2, '--thread=1')
-        else:
+        elif sys.platform.startswith('linux'):
             command_line_string.insert(1, '--ioengine=libaio')
+        elif sys.platform.startswith('freebsd'):
+            command_line_string.insert(1, '--ioengine=posixaio')
+        else:
+            command_line_string.insert(1, '--ioengine=sync')
 
         # need to create a list of all drive that will be targeted (regardless of the source)
         all_target_devices = []
@@ -2237,7 +2283,7 @@ def main():
     verbose_mode = args.verbose_mode
 
     global OS
-    OS = SystemCommands(os.name)
+    OS = SystemCommands()
 
     # Check for system compatibility
     compat_check(os.name)
