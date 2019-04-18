@@ -188,9 +188,48 @@ class SystemCommands(object):
                       "\nDetected %s drives" % len(self.drive_list)
 
     def clearscreen(self):
+        """clear the screen"""
         return os.system('cls' if self.os_type == 'nt' else 'clear')
 
     def list_luns(self):
+        """list all attached logical units but not volumes/partitions"""
+
+        def numeric_sort(list_to_sort):
+            """Sort drives in the proper order instead of alphabetical"""
+
+            items_tuples = []
+            for item in list_to_sort:
+                item_split = re.split(r'(\d+)', item)
+                items_tuples.append(tuple(item_split))
+
+            items_tuples.sort(key=lambda x: int(x[1]))
+
+            return [''.join(tup_item) for tup_item in items_tuples]
+
+        def alpha_sort(devs_to_sort):
+            """Use this to generate a decoder that takes a set off letters and translates to
+            an integer representation. This is more or less counting in base 26."""
+
+            # create a list of all letters, plus a blank as the first element
+            letter_lookup = [chr(letter) for letter in xrange(ord('a'), ord('a') + 26)]
+            letter_lookup.insert(0, '')
+
+            revised_dev_list = []
+
+            for dev in devs_to_sort:
+                letters_to_sort = dev  # .replace('sd', '')
+                # calculate the letter to pull out of letter lookup for the first letter
+
+                string_value = 0
+                for position, letter in enumerate(reversed(letters_to_sort)):
+                    letter_value = letter_lookup.index(letter) * (26 ** position)
+                    string_value += letter_value
+
+                revised_dev_list.append((dev, string_value))
+
+            revised_dev_list.sort(key=lambda x: int(x[1]))
+
+            return [dev_tup[0] for dev_tup in revised_dev_list]
 
         if self.os_type == 'win32':  # for Windows
             # device = subprocess.check_output('wmic diskdrive get deviceid', shell=True).split()
@@ -200,6 +239,8 @@ class SystemCommands(object):
             devices_unfiltered = subprocess.check_output('wmic diskdrive get deviceid', shell=True).splitlines()
             devices = [device.strip() for device in devices_unfiltered if device and 'DeviceID' not in device]
 
+            devices = numeric_sort(devices)
+
         elif self.os_type.startswith('linux'):  # for Linux
             # TODO: Consider whether lsblk is a better way to do this
             devices = []
@@ -207,24 +248,27 @@ class SystemCommands(object):
                 if device.startswith("sd") and not device[-1].isdigit():
                     devices.append(str('/dev/' + device))
 
+            devices = alpha_sort(devices)
+
         elif self.os_type.startswith('freebsd'):
 
             devices = []
             for device in os.listdir("/dev/"):
                 if device.startswith("da") and not re.search(r'p[\d]+$', device):
+                    # the regex here is: ends with 'p' followed by any number of any length
                     devices.append(str('/dev/') + device)
+
+            devices = numeric_sort(devices)
 
         else:
             devices = []
             print "Unrecognized OS type: %s" % self.os_type
             quit(5)
 
-        # sort works here, but not on the return
-        devices.sort()
-
         return devices
 
     def get_serial_num(self, drive):
+        """get the serial number of the given single drive"""
         # TODO: use these for Windows:  wmic diskdrive get index,deviceid,serialnumber,partitions
         # TODO: for single drive: wmic diskdrive 11 get serialnumber(but it returns the header)
         if self.os_type == 'win32':
@@ -297,6 +341,7 @@ class SystemCommands(object):
             return serial
 
     def write_cache(self, drive, cache_state):
+        """set the write cache of a single drive"""
         def change_state(parm_val, smartctl_val, drive, cache_status):
             if self.os_type == "win32":
                 # TODO: Search for SeaChest
@@ -332,6 +377,7 @@ class SystemCommands(object):
             pass
 
     def partition_check(self):
+        """create a list of all physical drives that contain partitions"""
         if self.os_type == "win32":
 
             devs_unfiltered = subprocess.check_output('wmic diskdrive get deviceid,partitions', shell=True).splitlines()
@@ -381,7 +427,7 @@ class SystemCommands(object):
             return set(parted_devices)
 
     def get_temperature(self, drive):
-        """use this to get the temperature for a drive. Will try to use smartctl for Windows and Linux"""
+        """use this to get the temperature for a drive"""
         try:
             p1 = subprocess.Popen(["smartctl", "-A", "%s" % drive], stdout=subprocess.PIPE)
             p2 = subprocess.Popen(["grep", "Serial"], stdin=p1.stdout, stdout=subprocess.PIPE)
