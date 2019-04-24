@@ -327,7 +327,7 @@ class SystemCommands(object):
                     try:
                         drive_short = drive.split('/')[2]
                         p1 = subprocess.Popen(['geom', 'disk', 'list', drive_short], stdout=subprocess.PIPE)
-                        p2 = subprocess.Popen(['grep', 'ident'], stdin=p1.stdout,stdout=subprocess.PIPE)
+                        p2 = subprocess.Popen(['grep', 'ident'], stdin=p1.stdout, stdout=subprocess.PIPE)
                         p1.stdout.close()
                         out, err = p2.communicate()
                         try:
@@ -394,7 +394,7 @@ class SystemCommands(object):
                     parted_devices.append(dev_tuple[0])
 
             # TODO: windows can return no status for partition; that causes index error here; if that can be caught the
-            # TODO: cont: whole complex thing above can use the one liner below
+            # TODO: cont: whole  thing above can use the one liner below
             # TODO: try this: [pdev.split()[0] for pdev in filtered_devs if pdev.split()[1] or pdev.split()[1] != 0]
             # parted_devices = [pdev.split()[0] for pdev in filtered_devs if pdev.split()[1] != 0]
 
@@ -430,7 +430,7 @@ class SystemCommands(object):
         """use this to get the temperature for a drive"""
         try:
             p1 = subprocess.Popen(["smartctl", "-A", "%s" % drive], stdout=subprocess.PIPE)
-            p2 = subprocess.Popen(["grep", "Serial"], stdin=p1.stdout, stdout=subprocess.PIPE)
+            p2 = subprocess.Popen(["grep", "Temperature"], stdin=p1.stdout, stdout=subprocess.PIPE)
 
             p1.stdout.close()
             temp_out, err = p2.communicate()
@@ -1791,7 +1791,10 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
     if not all_nested_lists_empty(fio_errors_list):
         print "****WARNING**** \nThere may be fio errors in results file: "
         for fio_error in fio_errors_list:
-            print fio_error[0]
+            try:
+                print fio_error[0]
+            except IndexError:
+                print fio_error
 
     print "\nAll workloads complete!"
 

@@ -205,8 +205,8 @@ def layout_sheet(devices, fan_values, xlsx_file_name):
 # 2 table test db
 # test_db = r'C:\Users\503265\Documents\Customer_Info\Twitter\MobulaBP_ISP_030819\LatencyResults.db'
 # 1 table test db
-test_db = r'C:\Users\503265\Documents\Customer_Info\Twitter\MobBP_ISP_031319_rebase\LatencyResults.db'
-test_xlsx = r'C:\Users\503265\Documents\Customer_Info\Twitter\MobBP_ISP_031319_rebase\test_ISP.xlsx'
+test_db = r'C:\Users\503265\Documents\Customer_Info\Netflix\Harrier_ISP_Prelim_servo\Harrier_ISP_original_servo\LatencyResults.db'
+test_xlsx = r'C:\Users\503265\Documents\Customer_Info\Netflix\Harrier_ISP_Prelim_servo\Harrier_ISP_original_servo\test_ISP.xlsx'
 
 chosen_table = choose_table(test_db)
 print chosen_table
