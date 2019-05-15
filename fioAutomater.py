@@ -189,7 +189,7 @@ class SystemCommands(object):
 
     def clearscreen(self):
         """clear the screen"""
-        return os.system('cls' if self.os_type == 'nt' else 'clear')
+        return os.system('cls' if self.os_type.startswith('win') else 'clear')
 
     def list_luns(self):
         """list all attached logical units but not volumes/partitions"""
@@ -962,7 +962,7 @@ def compat_check(env):
     # Check for temperature tools
     if smartctlpath is None:
         warnings_list.append("No supported tool found to check temperature. If -T option is used, temperature values"
-                             "won't save properly. \nInstall smartctl to fix.")
+                             "won't save properly. \n    Install smartctl to fix.")
 
     # Summarize all the warnings and errors
     if len(warnings_list) > 0:
@@ -1794,7 +1794,7 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
             try:
                 print fio_error[0]
             except IndexError:
-                print fio_error
+                pass
 
     print "\nAll workloads complete!"
 
@@ -2321,8 +2321,7 @@ def main():
     # TODO: Add -D, --ListDevices to list the drives auto select will choose, then quit.
     # TODO: Add -S, --Stonewall (maybe name/letter change) to add the fio stonewall option and run 1 at a time
     # TODO: Add -L, --LogSave to allow saving of bw, iops, and lat logs (maybe use 1 flag each?)(might have mem issues)
-    # TODO: Add - , --temperaturecheck that takes an interval in sec to get drive temperature. Default to not check it
-    # TODO: Add -I, --ISPtest to put it into ISP test mode. Use 'ISP_example.fio' for how to set that up.
+    # TODO: Add -T , --temperaturecheck that takes an interval in sec to get drive temperature. Default to not check it
     # TODO: Allow system config on Linux:
     # TODO: /sys/block/sdx/device/queue_depth, /sys/block/sdx/queue/iosched/quantum, /sys/block/sdx/queue/max_sectors_kb
     args = parser.parse_args()
