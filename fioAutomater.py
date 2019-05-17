@@ -222,8 +222,9 @@ class SystemCommands(object):
 
                 string_value = 0
                 for position, letter in enumerate(reversed(letters_to_sort)):
-                    letter_value = letter_lookup.index(letter) * (26 ** position)
-                    string_value += letter_value
+                    if letter in letter_lookup:
+                        letter_value = letter_lookup.index(letter) * (26 ** position)
+                        string_value += letter_value
 
                 revised_dev_list.append((dev, string_value))
 
@@ -2346,6 +2347,15 @@ def main():
     else:  # if it doesn't exist and doesn't end in .db, assume the user wants to create a folder
         db_location = os.path.join(args.outpath, 'LatencyResults.db')
 
+    # separate the filename from the path so that the user can be told each
+    # out_dir, db_name = os.path.split(db_location)
+
+    results_db_path, result_db = os.path.split(db_location)
+
+    # Create the results folder if it doesn't already exist
+    if not os.path.exists(results_db_path):
+        os.makedirs(results_db_path)
+
     # check to see of the user has chosen to load a saved workload list,
     # and call the loader and skip the 1st set of generator steps if so
     if args.load_from_file:
@@ -2404,15 +2414,6 @@ def main():
         # for now this builds a unique job for each device. Once we allow custom jobs this might change
         # TODO: sort this out for custom jobs and ISP mode
         workloads_plus_devices = job_builder(final_list_of_workloads, drives_as_jobs)
-
-    # separate the filename from the path so that the user can be told each
-    # out_dir, db_name = os.path.split(db_location)
-
-    results_db_path, result_db = os.path.split(db_location)
-
-    # Create the results folder if it doesn't already exist
-    if not os.path.exists(results_db_path):
-        os.makedirs(results_db_path)
 
     # call the db creator fct to set up results storage and get the values in the table if it already exists
     result_table, table_row_id, wl_id, read_data_to_pull, write_data_to_pull = \
