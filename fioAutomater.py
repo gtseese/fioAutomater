@@ -1486,7 +1486,7 @@ def drive_assigner(targets_list):
         print "Requested %s targets. Found %s valid target logical units." % (num_drives_to_auto_assign, len(target_luns))
 
     else:
-        # end up here if the user did used the -d flag
+        # end up here if the user did use the -d flag
 
         # on Windows, if user provided PDx notation convert to \\.\PHYSICALDRIVEx method (req'd by fio)
         if os.name == 'nt':
@@ -1529,16 +1529,26 @@ def drive_assigner(targets_list):
 
         target_luns = [final_drive for final_drive in target_luns if final_drive not in targets_to_remove]
 
+        dev_errors = []
         for index, target in enumerate(target_luns):
             # TODO: Use .format style used in display_workloads_list to prevent it from staggering on large numbers
             # TODO: combine this and the nearly identical one above into a single statement
-            print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
+            try:
+                print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
+            except KeyError:
+                print "%d: Device error at: %8s. Unable to find device. Will not test" % (index+1, target)
+                dev_errors.append(target)
+
+        target_luns = [final_lun for final_lun in target_luns if final_lun not in dev_errors]
 
     target_verify = raw_input("\nVerify device list. Press Enter to continue or [Q] to Quit: ")
 
     if 'Q' in target_verify.upper():
         print "Quitting due to keystroke..."
         quit(0)
+    elif len(target_luns) == 0:
+        print "No valid drives assigned. Quitting..."
+        quit(4)
     else:
         return target_luns
 
