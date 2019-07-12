@@ -1303,7 +1303,7 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
         if 'Q' in stop_test.upper():
             quit(0)
 
-    isp_global = Workload(jobname='global', run_time=isp_runtime, blocksize='4K', ramp_time=isp_ramp_time,
+    isp_global = Workload(jobname='global', run_time=isp_runtime, ramp_time=isp_ramp_time,
                           bw_avg_time=1000, start_delay=1, group_report=True)
 
     # TODO: change this from None to a proper pass-in (right now if user uses -d it gets ignored)
@@ -1311,13 +1311,20 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
 
     def agitator_builder(drive):
         """Use this to build a list of agitators (drives not under measured workload)"""
-        agitation_job = Workload(jobname='Ag_'+OS.serial_number[drive], io_target=drive,
+        agitation_job = Workload(jobname='Ag_'+OS.serial_number[drive], io_target=drive, blocksize='4K',
                                  queue_depth=1, readwrite=workload_details_dict['R'])
         return agitation_job
 
     for wl_type in [workload_details_dict['W'], workload_details_dict['Y']]:
+        if wl_type == workload_details_dict['W']:
+            wl_blocksize = '4K'
+        elif wl_type == workload_details_dict['Y']:
+            wl_blocksize = '128K'
+        else:
+            wl_blocksize = '4K'
+
         for isp_drive in isp_drives_list:
-            under_test_job = Workload(jobname=OS.serial_number[isp_drive], io_target=isp_drive,
+            under_test_job = Workload(jobname=OS.serial_number[isp_drive], io_target=isp_drive, blocksize=wl_blocksize,
                                       queue_depth=8, readwrite=wl_type, enable_write_cache=False)
 
             isp_workload = (isp_global, under_test_job,)
@@ -1805,7 +1812,7 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
             try:
                 print fio_error[0]
             except IndexError:
-                pass
+                print fio_error
 
     print "\nAll workloads complete!"
 
