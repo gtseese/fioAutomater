@@ -449,9 +449,6 @@ class SystemCommands(object):
         return temperature
 
 
-### End Section: OS dependent fcts ##############################################################
-
-
 class IOGeneratorInputs(object):
 
     all_io_commands = []
@@ -479,9 +476,7 @@ class IOGeneratorInputs(object):
 
 # Use this to allow on the fly creating of new methods
 # https://stackoverflow.com/questions/17929543/how-can-i-dynamically-create-class-methods-for-a-class-in-python
-# Use this to allow optional arguments in the __init__
-# https://stackoverflow.com/questions/8187082/how-can-you-set-class-attributes-from-variable-arguments-kwargs-in-python
-# https://stackoverflow.com/questions/3884612/automatically-setting-class-member-variables-in-python
+
 class Workload(object):
     """Each fio workload to be run should be an instance of this Workload object
        Returns from methods should all be 'return fio_command, fio_cmd_value, *additional_properties' """
@@ -1316,12 +1311,12 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
         return agitation_job
 
     for wl_type in [workload_details_dict['W'], workload_details_dict['Y']]:
-        if wl_type == workload_details_dict['W']:
+        if wl_type == workload_details_dict['W']:  # Use 4k for random writes
             wl_blocksize = '4K'
-        elif wl_type == workload_details_dict['Y']:
+        elif wl_type == workload_details_dict['Y']:  # Use 128k for sequential writes
             wl_blocksize = '128K'
         else:
-            wl_blocksize = '4K'
+            wl_blocksize = '4K'  # Default to 4k (shouldn't end up here)
 
         for isp_drive in isp_drives_list:
             under_test_job = Workload(jobname=OS.serial_number[isp_drive], io_target=isp_drive, blocksize=wl_blocksize,
