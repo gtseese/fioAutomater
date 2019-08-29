@@ -1416,7 +1416,8 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
 
         for isp_drive in isp_drives_list:
             under_test_job = Workload(jobname=isp_drive.serial, io_target=isp_drive.device_handle,
-                                      blocksize=wl_blocksize, queue_depth=8, readwrite=wl_type, enable_write_cache=False)
+                                      blocksize=wl_blocksize, queue_depth=8, readwrite=wl_type,
+                                      enable_write_cache=False)
 
             isp_workload = (isp_global, under_test_job,)
 
@@ -1581,7 +1582,7 @@ def drive_assigner(targets_list, list_devices=False):
         else:
             device_list.append(DeviceData(device, OS.serial_number[device], False))
 
-    # TODO: Test the formatting of this
+    # TODO: Fix the formatting of this
     if list_devices is True:
         print "All attached devices:"
         print "%8s %12s %12s" % ("Device", "Serial", "Has partition(s)")
@@ -1727,20 +1728,22 @@ def jobs_from_drives(list_of_drives, custom_jobnames=False):
     list_of_jobs = []
     for target_drive in list_of_drives:
 
-        default_jobname = target_drive.serial
-        if custom_jobnames is True:
-            jobname_prompt = raw_input("Current jobname is %s. \n"
-                                       "Enter a new name, or leave blank to use current: " % default_jobname)
-            if jobname_prompt == '':
-                set_jobname = default_jobname
+        if target_drive.under_test is True:
+
+            default_jobname = target_drive.serial
+            if custom_jobnames is True:
+                jobname_prompt = raw_input("Current jobname is %s. \n"
+                                           "Enter a new name, or leave blank to use current: " % default_jobname)
+                if jobname_prompt == '':
+                    set_jobname = default_jobname
+                else:
+                    set_jobname = jobname_prompt
             else:
-                set_jobname = jobname_prompt
-        else:
-            set_jobname = default_jobname
-        # list_of_jobs.append(Workload(io_target='/dev/'+target_drive, jobname=target_drive))
-        new_job = Workload(jobname=set_jobname)
-        new_job.filename = target_drive.serial
-        list_of_jobs.append(new_job)
+                set_jobname = default_jobname
+            # list_of_jobs.append(Workload(io_target='/dev/'+target_drive, jobname=target_drive))
+            new_job = Workload(jobname=set_jobname)
+            new_job.filename = target_drive.device_handle
+            list_of_jobs.append(new_job)
 
     # prompt user to press Enter before run starts to be sure it never wipes data
     # drive_verify = raw_input("\nVerify drive list. Press Enter to continue or [Q] to Quit: ")
