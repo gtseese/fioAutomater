@@ -1360,7 +1360,7 @@ def generate_workloads_list(wl_defines, wl_matrix, wc_settings, runtime, ramptim
     return final_wl_list  # , fio_param_list
 
 
-def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
+def isp_mode(isp_runtime, isp_ramp_time, isp_drive_choice=None):
     """if the user enters -I or --ISPtest then use this to set up the workloads to run list"""
 
     # TODO: Figure out how to handle Dual LUN
@@ -1398,7 +1398,9 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
                           bw_avg_time=1000, start_delay=1, group_report=True)
 
     # TODO: change this from None to a proper pass-in (right now if user uses -d it gets ignored)
-    isp_drives_list = drive_assigner(None)
+    isp_drives_list = drive_assigner(isp_drive_choice)
+    drives_verified = True if len(isp_drives_list) == len(OS.luns_list) - len(OS.partitioned_luns) else False
+    agitator_drive_list = drive_assigner(len(OS.luns_list) - len(OS.partitioned_luns), targets_verified=drives_verified)
 
     def agitator_builder(drive):
         """Use this to build a list of agitators (drives not under measured workload)"""
@@ -1415,32 +1417,34 @@ def isp_mode(fan_command, fan_speeds, isp_runtime, isp_ramp_time):
             wl_blocksize = '4K'  # Default to 4k (shouldn't end up here)
 
         for isp_drive in isp_drives_list:
-            under_test_job = Workload(jobname=isp_drive.serial, io_target=isp_drive.device_handle,
-                                      blocksize=wl_blocksize, queue_depth=8, readwrite=wl_type,
-                                      enable_write_cache=False)
+            if isp_drive.under_test is True:
+                print isp_drive.device_handle
+                under_test_job = Workload(jobname=isp_drive.serial, io_target=isp_drive.device_handle,
+                                          blocksize=wl_blocksize, queue_depth=8, readwrite=wl_type,
+                                          enable_write_cache=False)
 
-            isp_workload = (isp_global, under_test_job,)
+                isp_workload = (isp_global, under_test_job,)
 
-            # this is a job that should be run once and only once at the beginning of the ISP at lowest fan setting
-            isp_baseline = (isp_global, under_test_job,)
+                # this is a job that should be run once and only once at the beginning of the ISP at lowest fan setting
+                isp_baseline = (isp_global, under_test_job,)
 
-            agitators = [agitator_builder(ag_drive) for ag_drive in isp_drives_list
-                         if ag_drive.device_handle != isp_drive.device_handle]
+                agitators = [agitator_builder(ag_drive) for ag_drive in agitator_drive_list
+                             if ag_drive.device_handle != isp_drive.device_handle and ag_drive.has_partition is False]
 
-            for index, ag_job in enumerate(agitators):
-                if index == 0:
-                    setattr(ag_job, 'new_group', True)
-                isp_workload += (ag_job,)
-                print ".",
+                for index, ag_job in enumerate(agitators):
+                    if index == 0:
+                        setattr(ag_job, 'new_group', True)
+                    isp_workload += (ag_job,)
+                    print index,
 
-            # DEBUG:
-            # print isp_workload
-            # print len(isp_workload)
-            print ""
+                # DEBUG:
+                # print isp_workload
+                # print len(isp_workload)
+                print ""
 
-            isp_workload_list.append(isp_workload)
-            isp_global_list.append(isp_global)
-            isp_baseline_list.append(isp_baseline)
+                isp_workload_list.append(isp_workload)
+                isp_global_list.append(isp_global)
+                isp_baseline_list.append(isp_baseline)
 
     # DEBUG:
     # print len(isp_global_list)
@@ -1547,30 +1551,64 @@ def display_workloads_list(workloads_to_display, time_to_wait):
     # TODO: easy calc idea is to use seconds_to_add = len(job_list)/3
 
 
-def drive_assigner(targets_list, list_devices=False):
+def drive_assigner(targets_list, list_devices=False, targets_verified=False):
     """This function automatically finds and targets the user selected number of drives
     Auto assign goes in alphabetical order, low to high"""
 
-    def partition_overwrite(t_dev):
+    def partition_overwrite_prompt(t_dev, _overwrite_all=False):
         print "\n***WARNING***\nDevice contains partition(s): %8s %12s" % (t_dev.device_handle, t_dev.serial)
 
-        while True:
-            drive_remove = raw_input("Do you want to continue (WILL DESTROY ANY DATA ON %s)\n"
-                                     "[Y/n] Yes to continue, no to quit, or [R] to remove just this drive: "
-                                     % t_dev.device_handle)
+        if _overwrite_all is False:
+            while True:
+                    drive_remove = raw_input("Do you want to continue (WILL DESTROY ALL DATA ON %s):\n"
+                                             "[Y]: Yes to continue\n"
+                                             "[N]: No to quit\n"
+                                             "[R]: to remove this drive and continue\n"
+                                             "[A]: to remove this drive and any others\n "
+                                             % t_dev.device_handle)
 
-            if drive_remove == 'N' or drive_remove == 'n':
-                print "Quitting to avoid data loss..."
-                quit(4)
-            elif drive_remove == 'Y':
-                print "You have chosen to overwrite %s (%s). Do NOT proceed if that is a mistake."
-                time.sleep(2)
+                    if drive_remove.upper() == 'N':
+                        print "Quitting to avoid data loss..."
+                        quit(4)
+                    elif drive_remove.upper() == 'Y':
+                        print "You have chosen to overwrite %s (%s). Do NOT proceed if that is a mistake." %\
+                              (t_dev.device_handle, t_dev.serial)
+                        time.sleep(1)
+                        t_dev.set_test(True)
+                        break
+                    elif drive_remove == 'A':
+                        print "You have chosen to overwrite all drives. Do NOT proceed if that is a mistake"
+                        time.sleep(2)
+                        _overwrite_all = True
+                        print "Will overwrite %s (%s). Do NOT proceed if that is a mistake." % \
+                              (t_dev.device_handle, t_dev.serial)
+                        t_dev.set_test(True)
+                    elif drive_remove == 'R':
+                        print "Removing %s (%s) from test..." % (t_dev.device_handle, t_dev.serial)
+                        t_dev.set_test(False)
+        else:
+            print "Will overwrite %s (%s). Do NOT proceed if that is a mistake." % (t_dev.device_handle, t_dev.serial)
+            t_dev.set_test(True)
+
+        return _overwrite_all
+
+    def auto_assign(number_to_assign):
+        """Auto assign drives if given a user input number or the function is given an integer"""
+
+        i = 0
+        for target_device in device_list:
+            if i < number_to_assign and target_device.has_partition is False:
+                target_device.set_test(True)
+                i += 1
+                # print "%3d: Assigned for testing:  %8s %12s" % (i, target_device.device_handle, target_device.serial)
+            elif i < number_to_assign and target_device.has_partition is True:
+                if verbose_mode is True:
+                    print "Skipping partitioned device:  %8s %12s" % (target_device.device_handle, target_device.serial)
+            else:
                 break
-            elif drive_remove == 'y':
-                print "If you want to proceed to destroy all data, please enter uppercase 'Y'..."
-            elif drive_remove == 'R' or drive_remove == 'r':
-                print "Removing "
-                t_dev.set_test(False)
+
+        print "Requested %s targets. Found and assigned %s valid logical units" % \
+              (number_to_assign, i)
 
     if verbose_mode is True:
         print "Collecting info on all attached drives (logical units)..."
@@ -1610,6 +1648,8 @@ def drive_assigner(targets_list, list_devices=False):
             except ValueError:
                 print "Must be an integer value..."
 
+        auto_assign(num_drives_to_auto_assign)
+
         # target_luns = []
         #
         # for index, target in enumerate(valid_targets):
@@ -1622,20 +1662,8 @@ def drive_assigner(targets_list, list_devices=False):
         # print "Requested %s targets. Found %s valid target logical units." % \
         #       (num_drives_to_auto_assign, len(target_luns))
 
-        i = 0
-        for target_device in device_list:
-            if i < num_drives_to_auto_assign and target_device.has_partition is False:
-                target_device.set_test(True)
-                i += 1
-                # print "%3d: Assigned for testing:  %8s %12s" % (i, target_device.device_handle, target_device.serial)
-            elif i < num_drives_to_auto_assign and target_device.has_partition is True:
-                if verbose_mode is True:
-                    print "Skipping partitioned device:  %8s %12s" % (target_device.device_handle, target_device.serial)
-            else:
-                break
-
-        print "Requested %s targets. Found and assigned %s valid logical units" % \
-              (num_drives_to_auto_assign, i)
+    elif isinstance(targets_list, (int, long)):
+        auto_assign(targets_list)
 
     else:
         # end up here if the user did use the -d flag
@@ -1656,67 +1684,33 @@ def drive_assigner(targets_list, list_devices=False):
 
             target_luns = targets_list
 
+        overwrite_all = False
         for device in device_list:
             if device.device_handle in target_luns and device.has_partition is False:
                 device.set_test(True)
             elif device.device_handle in target_luns and device.has_partition is True:
-                partition_overwrite(device)
+                overwrite_all = partition_overwrite_prompt(device, overwrite_all)
             else:
                 pass
 
-        # # this will find any partitioned drives the user selected
-        # targeted_partitioned_luns = [lun for lun in target_luns if lun in partitioned_luns_list]
-        #
-        # targets_to_remove = []
-        # for p_target in targeted_partitioned_luns:
-        #     print "\n***WARNING***\nDevice contains partitions: %8s %12s" % (p_target, OS.serial_number[p_target])
-        #     while True:
-        #         # TODO: add an overwrite all option
-        #             drive_remove = raw_input("Do you want to continue? (Will DESTROY ALL DATA)\n"
-        #                                      "[Y/n] or [R] to remove drive from test: ").upper()
-        #             if drive_remove == 'N':
-        #                 quit(4)
-        #                 print "Quitting to avoid data overwrite..."
-        #             elif drive_remove == 'Y':
-        #                 print "You have chosen to overwrite %s : %s. Do NOT proceed if that is a mistake!" \
-        #                       % (p_target, OS.serial_number[p_target])
-        #                 break
-        #             elif drive_remove == 'R':
-        #                 targets_to_remove.append(p_target)
-        #                 break
-        #             else:
-        #                 print "Invalid choice.."
-        #
-        # target_luns = [final_drive for final_drive in target_luns if final_drive not in targets_to_remove]
-        #
-        # dev_errors = []
-        # for index, target in enumerate(target_luns):
-        #     # TODO: Use .format style used in display_workloads_list to prevent it from staggering on large numbers
-        #     # TODO: combine this and the nearly identical one above into a single statement
-        #     try:
-        #         print "%d: Assigned for testing: %8s %12s" % (index+1, target, OS.serial_number[target])
-        #     except KeyError:
-        #         print "%d: Device error at: %8s. Unable to find device. Will not test" % (index+1, target)
-        #         dev_errors.append(target)
-        #
-        # target_luns = [final_lun for final_lun in target_luns if final_lun not in dev_errors]
+    if targets_verified is False:
+        j = 0
+        for dev in device_list:
+            if dev.under_test is True:
+                j += 1
+                print " %5d: Assigned for testing: %8s %12s" % (j, dev.device_handle, dev.serial)
 
-    j = 0
-    for dev in device_list:
-        if dev.under_test is True:
-            j += 1
-            print " %5d: Assigned for testing: %8s %12s" % (j, dev.device_handle, dev.serial)
+        if j == 0:
+            print "No valid drives assigned. Quitting..."
+            quit(4)
 
-    target_verify = raw_input("\nVerify device list. Press Enter to continue or [Q] to Quit: ")
+        target_verify = raw_input("\nVerify device list. Press Enter to continue or [Q] to Quit: ")
 
-    if 'Q' in target_verify.upper():
-        print "Quitting due to keystroke..."
-        quit(0)
-    elif j == 0:
-        print "No valid drives assigned. Quitting..."
-        quit(4)
-    else:
-        return device_list
+        if 'Q' in target_verify.upper():
+            print "Quitting due to keystroke..."
+            quit(0)
+
+    return device_list
 
     # return target_drives
 
@@ -1745,15 +1739,6 @@ def jobs_from_drives(list_of_drives, custom_jobnames=False):
             new_job.filename = target_drive.device_handle
             list_of_jobs.append(new_job)
 
-    # prompt user to press Enter before run starts to be sure it never wipes data
-    # drive_verify = raw_input("\nVerify drive list. Press Enter to continue or [Q] to Quit: ")
-    # This check has been moved. Only keep until I've verified the new location works in all cases
-
-    # if 'Q' in drive_verify.upper():
-    #     print "Quitting due to keystroke..."
-    #     quit(0)
-    # else:
-    #     return list_of_jobs
     return list_of_jobs
 
 
@@ -2560,8 +2545,13 @@ def main():
 
     elif args.isp_test is True:
         # TODO: pull fan_command and fan_speed out of this; see line 2196 for why
-        baseline_workloads, list_of_workloads, workloads_plus_devices = isp_mode(args.fan_command, args.fan_speeds,
-                                                                                 args.run_time, args.ramp_time)
+        if args.target_devices:
+            isp_drives = args.target_devices
+        else:
+            isp_drives = None
+
+        baseline_workloads, list_of_workloads, workloads_plus_devices = isp_mode(args.run_time, args.ramp_time,
+                                                                                 isp_drive_choice=isp_drives)
 
         # TODO: Changed, verify: Figure out where the hell I put that reordering of columns
         # TODO: Keep advanced user flexibility in mind when modifying all this
