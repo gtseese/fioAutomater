@@ -1822,6 +1822,8 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
             row_id += 1
             iog_values[0] = row_id
 
+            num_job_cmds_to_remove = 0
+
             for wl_operation in job_to_run.wl_gen_commands:
                 """cycle each defined fio/IOMeter command"""
 
@@ -1912,7 +1914,7 @@ def run_fio_and_save_results(workloads_to_run, result_location, result_table, sl
 
         # Once the workload completes, put its data into the table. Parse and save only returns errors
         fio_errors = parse_and_save_wlg_results(results_db_location, result_db, result_table, output_string,
-                                                workload_to_run, read_data_to_pull, write_data_to_pull, wl_id)
+                                                workload_to_run, read_data_to_pull, write_data_to_pull, wl_id, row_id)
 
         fio_errors_list.append(fio_errors)
 
@@ -2159,7 +2161,7 @@ def populate_results_db(result_loc, db_results_file, db_results_table, active_wo
 
 
 def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_file,
-                               active_wl, rd_datapoints, wrt_datapoints, wl_number):
+                               active_wl, rd_datapoints, wrt_datapoints, wl_number, ending_row_number):
     """take the fio output and parse it out into the needed format to add it to the database
     Will return the filename of any errors encountered (1 per file name)"""
     # TODO: this should maybe combine with populate_results_db fct; they're very similar
@@ -2173,7 +2175,15 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
 
     fio_parse_errors = []
 
+    # because of where parse and save is called, the row number comes in as the row number of the last job,
+    # but saving needs the row number of the starting job, calc it
+    row_number = ending_row_number - len(wl_result_line)
+
     for job_line in wl_result_line:
+
+        # update the row number at the start of the loop since it's 1 indexed, not 0
+        row_number += 1
+
         if not job_line.startswith('3;'):
             fio_parse_errors.append(str(fio_result_file))
         else:
@@ -2236,7 +2246,8 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
                 db_insertion_string = db_insertion_string[:-1]
 
             # only update the job being parsed for the current workload
-            db_insertion_string = db_insertion_string + ' WHERE WLID=%s AND name="%s";' % (wl_number, job_name)
+            db_insertion_string = db_insertion_string + ' WHERE id=%s AND WLID=%s AND name="%s";' % \
+                                  (row_number, wl_number, job_name)
 
             # DEBUG:
             # print db_insertion_string
