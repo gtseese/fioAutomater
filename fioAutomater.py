@@ -1397,7 +1397,7 @@ def isp_mode(isp_runtime, isp_ramp_time, isp_drive_choice=None):
     isp_global = Workload(jobname='global', run_time=isp_runtime, ramp_time=isp_ramp_time,
                           bw_avg_time=1000, start_delay=1, group_report=True)
 
-    # TODO: change this from None to a proper pass-in (right now if user uses -d it gets ignored)
+    # TODO: Allow exclusions to both drives lists
     isp_drives_list = drive_assigner(isp_drive_choice)
     drives_verified = True if len(isp_drives_list) == len(OS.luns_list) - len(OS.partitioned_luns) else False
     agitator_drive_list = drive_assigner(len(OS.luns_list) - len(OS.partitioned_luns), targets_verified=drives_verified)
@@ -1429,7 +1429,9 @@ def isp_mode(isp_runtime, isp_ramp_time, isp_drive_choice=None):
                 isp_baseline = (isp_global, under_test_job,)
 
                 agitators = [agitator_builder(ag_drive) for ag_drive in agitator_drive_list
-                             if ag_drive.device_handle != isp_drive.device_handle and ag_drive.has_partition is False]
+                             if ag_drive.device_handle != isp_drive.device_handle
+                             and ag_drive.has_partition is False
+                             and ag_drive.under_test is True]
 
                 for index, ag_job in enumerate(agitators):
                     if index == 0:
@@ -2602,7 +2604,6 @@ def main():
 
     # actually runs it and saves it
     if args.fan_command is not None and args.fan_speeds is not None:
-        # TODO: maybe put the create_results_db here to avoid creating a pwm column when it isn't needed
 
         # TODO: recalc the total runtime, as it doesn't account for fan loops (see ~line 1277)
 
@@ -2700,7 +2701,7 @@ def main():
                                                        float(args.time_to_sleep), table_row_id, wl_id,
                                                        read_data_to_pull, write_data_to_pull, args.fan_speeds)
 
-    print "\nFor plots, target the Graphing script to the database file:\n%s\n\n" % os.path.abspath(db_location)
+    print "\nFor plots, target the Graphing script to the database file: \n %s \n\n" % os.path.abspath(db_location)
 
 
 if __name__ == "__main__":
