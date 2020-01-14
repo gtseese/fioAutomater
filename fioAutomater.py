@@ -2247,6 +2247,7 @@ def parse_and_save_wlg_results(result_location, db_file, table_name, fio_result_
             if db_insertion_string[-1] is ',':
                 db_insertion_string = db_insertion_string[:-1]
 
+            # TODO: This is broken on ISP mode; row_number is wildly off
             # only update the job being parsed for the current workload
             db_insertion_string = db_insertion_string + ' WHERE id=%s AND WLID=%s AND name="%s";' % \
                                   (row_number, wl_number, job_name)
